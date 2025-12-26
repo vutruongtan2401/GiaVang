@@ -16,24 +16,62 @@ import streamlit as st
 from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
 from sklearn.cluster import KMeans
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
 
 plt.style.use('ggplot')
 
 # ==========================================================
 # LOAD DATA - B0: DATASET OVERVIEW
 # ==========================================================
-original_df = pd.read_csv("goldstock v2.csv")
+# Load CSV with semicolon delimiter
+original_df = pd.read_csv("goldstock v2.csv", sep=";")
 
-# Xóa cột index không cần thiết
+print("Columns in CSV:", original_df.columns.tolist())
+print("First few rows:")
+print(original_df.head())
+
+# Xóa cột index không cần thiết nếu có
+if "Column1" in original_df.columns:
+    original_df.drop(columns=["Column1"], inplace=True)
+
 if "Unnamed: 0" in original_df.columns:
     original_df.drop(columns=["Unnamed: 0"], inplace=True)
 
-# Chuyển Date sang datetime
-original_df["Date"] = pd.to_datetime(original_df["Date"])
+# Đảm bảo các cột chứa dữ liệu được xử lý đúng
+# Xử lý khoảng trắng dư thừa
+original_df.columns = original_df.columns.str.strip()
 
-# Sắp xếp theo thời gian
-original_df.sort_values(by="Date", inplace=True)
+# Chuyển đổi cột số sang numeric type
+numeric_cols = ["Volume", "Open", "High", "Low", "Close/Last"]
+for col in numeric_cols:
+    if col in original_df.columns:
+        original_df[col] = pd.to_numeric(original_df[col], errors='coerce')
+
+# Chuyển Date sang datetime với xử lý lỗi
+try:
+    # Thử nhiều định dạng khác nhau (DD/MM/YYYY là phổ biến)
+    original_df["Date"] = pd.to_datetime(original_df["Date"], format="%d/%m/%Y", errors='coerce')
+    
+    # Kiểm tra và loại bỏ các giá trị null sau khi convert
+    null_dates = original_df["Date"].isnull().sum()
+    if null_dates > 0:
+        print(f"Warning: {null_dates} rows with invalid dates will be removed")
+        original_df = original_df.dropna(subset=["Date"])
+        
+except Exception as e:
+    print(f"Error converting Date column: {e}")
+    print("Attempting alternative date parsing...")
+    original_df["Date"] = pd.to_datetime(original_df["Date"], infer_datetime_format=True, errors='coerce')
+    original_df = original_df.dropna(subset=["Date"])
+
+# Sắp xếp theo thời gian (từ cũ đến mới)
+original_df.sort_values(by="Date", inplace=True, ascending=True)
 original_df.reset_index(drop=True, inplace=True)
+
+print(f"Data loaded successfully: {len(original_df)} rows")
+print("Columns after processing:", original_df.columns.tolist())
+print(original_df.head())
 
 # ==========================================================
 # B2 – DATA CLEANING (TIỀN XỬ LÝ DỮ LIỆU)
@@ -45,16 +83,20 @@ df = original_df.copy()
 missing_data = df.isnull().sum() * 100 / df.shape[0]
 
 # Xóa duplicate
-df = df[df.duplicated() == False]
+df = df[df.duplicated() == False].reset_index(drop=True)
 
-# Kiểm tra logic giá (High >= Open, Close, Low; Low <= Open, Close)
-df = df[
-    (df["High"] >= df["Open"]) &
-    (df["High"] >= df["Close/Last"]) &
-    (df["High"] >= df["Low"]) &
-    (df["Low"] <= df["Open"]) &
-    (df["Low"] <= df["Close/Last"])
-]
+# Xóa các hàng có giá trị NaN sau khi xử lý
+df = df.dropna(subset=["Date", "Open", "High", "Low", "Close/Last", "Volume"])
+
+# Kiểm tra logic giá (High >= Open, Close/Last, Low; Low <= Open, Close/Last)
+if "High" in df.columns and "Low" in df.columns:
+    df = df[
+        (df["High"] >= df["Open"]) &
+        (df["High"] >= df["Close/Last"]) &
+        (df["High"] >= df["Low"]) &
+        (df["Low"] <= df["Open"]) &
+        (df["Low"] <= df["Close/Last"])
+    ]
 
 df.reset_index(drop=True, inplace=True)
 
@@ -604,3 +646,162 @@ with tab5:
     - Mô hình phân cụm giúp hiểu rõ cấu trúc dữ liệu giá vàng
     - Các cụm có thể đại diện cho các giai đoạn hoặc xu hướng giá khác nhau
     """)
+    
+    # ==========================================================
+    # LINEAR REGRESSION - PRICE PREDICTION
+    # ==========================================================
+    st.markdown("---")
+    st.subheader("📈 Dự đoán giá vàng (Linear Regression Prediction)")
+    
+    st.info("🔮 **Mô hình Linear Regression để dự đoán giá vàng đến năm 2027**")
+    
+    # Prepare data for Linear Regression
+    # Convert Date to numeric (days since first date)
+    df_model = df.copy()
+    df_model['Days'] = (df_model['Date'] - df_model['Date'].min()).dt.days
+    
+    # Features and target
+    X = df_model[['Days']].values
+    y = df_model['Close/Last'].values
+    
+    # Train Linear Regression model
+    lr_model = LinearRegression()
+    lr_model.fit(X, y)
+    
+    # Predictions on training data
+    y_pred_train = lr_model.predict(X)
+    
+    # Calculate metrics
+    mse = mean_squared_error(y, y_pred_train)
+    rmse = np.sqrt(mse)
+    mae = mean_absolute_error(y, y_pred_train)
+    r2 = r2_score(y, y_pred_train)
+    
+    # Display model performance
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("R² Score", f"{r2:.4f}")
+    with col2:
+        st.metric("RMSE", f"${rmse:.2f}")
+    with col3:
+        st.metric("MAE", f"${mae:.2f}")
+    with col4:
+        st.metric("MSE", f"${mse:.2f}")
+    
+    # Create future dates up to 2027
+    last_date = df_model['Date'].max()
+    target_date = pd.Timestamp('2027-12-31')
+    
+    # Generate future dates
+    future_dates = pd.date_range(start=last_date + pd.Timedelta(days=1), end=target_date, freq='D')
+    future_days = (future_dates - df_model['Date'].min()).days.values.reshape(-1, 1)
+    
+    # Predict future prices
+    future_prices = lr_model.predict(future_days)
+    
+    # Combine historical and future data
+    future_df = pd.DataFrame({
+        'Date': future_dates,
+        'Predicted_Price': future_prices
+    })
+    
+    # Visualization: Historical + Predictions
+    st.write("### 📊 Biểu đồ dự đoán giá vàng (Gold Price Prediction Chart)")
+    
+    fig, ax = plt.subplots(figsize=(14, 6))
+    
+    # Historical actual prices
+    ax.plot(df_model['Date'], df_model['Close/Last'], 
+            linewidth=2, color='steelblue', label='Historical Actual Price', alpha=0.8)
+    
+    # Historical predicted (fitted line)
+    ax.plot(df_model['Date'], y_pred_train, 
+            linewidth=2, color='orange', linestyle='--', label='Linear Regression Fit', alpha=0.7)
+    
+    # Future predictions
+    ax.plot(future_df['Date'], future_df['Predicted_Price'], 
+            linewidth=2.5, color='red', linestyle='-', label='Future Prediction (to 2027)', alpha=0.8)
+    
+    # Add confidence interval (simple approach)
+    std_error = np.std(y - y_pred_train)
+    ax.fill_between(future_df['Date'], 
+                    future_df['Predicted_Price'] - 1.96*std_error,
+                    future_df['Predicted_Price'] + 1.96*std_error,
+                    alpha=0.2, color='red', label='95% Confidence Interval')
+    
+    ax.set_xlabel("Date", fontsize=12, fontweight='bold')
+    ax.set_ylabel("Price (USD/oz)", fontsize=12, fontweight='bold')
+    ax.set_title("Gold Price Prediction using Linear Regression (Historical + Future)", fontsize=14, fontweight='bold')
+    ax.legend(loc='best', fontsize=10)
+    ax.grid(True, alpha=0.3)
+    plt.xticks(rotation=45)
+    plt.tight_layout()
+    st.pyplot(fig)
+    
+    # Show prediction statistics
+    st.write("### 📊 Thống kê dự đoán (Prediction Statistics)")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.write("**Dự đoán giá vàng:**")
+        prediction_stats = {
+            "Date": ["Last Historical", "End of 2025", "End of 2026", "End of 2027"],
+            "Predicted Price": [
+                f"${df_model['Close/Last'].iloc[-1]:.2f}",
+                f"${lr_model.predict([[((pd.Timestamp('2025-12-31') - df_model['Date'].min()).days)]])[0]:.2f}",
+                f"${lr_model.predict([[((pd.Timestamp('2026-12-31') - df_model['Date'].min()).days)]])[0]:.2f}",
+                f"${lr_model.predict([[((pd.Timestamp('2027-12-31') - df_model['Date'].min()).days)]])[0]:.2f}"
+            ]
+        }
+        st.dataframe(pd.DataFrame(prediction_stats), use_container_width=True)
+    
+    with col2:
+        st.write("**Thông số mô hình:**")
+        model_params = {
+            "Parameter": ["Slope (Hệ số góc)", "Intercept (Hằng số)", "Daily Price Change"],
+            "Value": [
+                f"{lr_model.coef_[0]:.4f}",
+                f"${lr_model.intercept_:.2f}",
+                f"${lr_model.coef_[0]:.4f}/day"
+            ]
+        }
+        st.dataframe(pd.DataFrame(model_params), use_container_width=True)
+    
+    # Model equation
+    st.write("### 📐 Phương trình hồi quy (Regression Equation)")
+    st.latex(f"Price = {lr_model.intercept_:.2f} + {lr_model.coef_[0]:.4f} \\times Days")
+    
+    # Interpretation
+    st.write("### 💡 Giải thích kết quả (Interpretation)")
+    st.write(f"""
+    **Ý nghĩa các chỉ số:**
+    - **R² = {r2:.4f}**: Mô hình giải thích {r2*100:.2f}% sự biến động của giá vàng {'✓ (Tốt)' if r2 > 0.7 else '⚠ (Trung bình)' if r2 > 0.5 else '✗ (Yếu)'}
+    - **RMSE = ${rmse:.2f}**: Sai số trung bình khoảng ${rmse:.2f}
+    - **Slope = {lr_model.coef_[0]:.4f}**: Giá vàng {'tăng' if lr_model.coef_[0] > 0 else 'giảm'} trung bình ${abs(lr_model.coef_[0]):.4f}/ngày
+    
+    **Xu hướng:**
+    {f"📈 Giá vàng có xu hướng tăng đều đặn với tốc độ ${lr_model.coef_[0]*365:.2f}/năm" if lr_model.coef_[0] > 0 else f"📉 Giá vàng có xu hướng giảm với tốc độ ${abs(lr_model.coef_[0]*365):.2f}/năm"}
+    
+    **Lưu ý:** ⚠️ Dự đoán dài hạn với Linear Regression có thể không chính xác do giả định xu hướng tuyến tính. 
+    Giá vàng bị ảnh hưởng bởi nhiều yếu tố kinh tế, chính trị phức tạp.
+    """)
+    
+    # Download prediction data
+    st.write("### 💾 Tải dữ liệu dự đoán (Download Prediction Data)")
+    
+    # Combine all data for download
+    download_df = pd.DataFrame({
+        'Date': list(df_model['Date']) + list(future_df['Date']),
+        'Actual_Price': list(df_model['Close/Last']) + [np.nan]*len(future_df),
+        'Predicted_Price': list(y_pred_train) + list(future_df['Predicted_Price']),
+        'Type': ['Historical']*len(df_model) + ['Future']*len(future_df)
+    })
+    
+    csv_data = download_df.to_csv(index=False)
+    st.download_button(
+        label="📥 Download Prediction CSV",
+        data=csv_data,
+        file_name="gold_price_prediction_to_2027.csv",
+        mime="text/csv"
+    )
