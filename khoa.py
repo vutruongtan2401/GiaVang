@@ -22,14 +22,20 @@ plt.style.use('ggplot')
 # ==========================================================
 # LOAD DATA - B0: DATASET OVERVIEW
 # ==========================================================
-original_df = pd.read_csv("goldstock v2.csv")
+original_df = pd.read_csv("goldstock v2.csv", sep=";")
+
+# Strip whitespace từ tên cột
+original_df.columns = original_df.columns.str.strip()
 
 # Xóa cột index không cần thiết
 if "Unnamed: 0" in original_df.columns:
     original_df.drop(columns=["Unnamed: 0"], inplace=True)
 
+if "Column1" in original_df.columns:
+    original_df.drop(columns=["Column1"], inplace=True)
+
 # Chuyển Date sang datetime
-original_df["Date"] = pd.to_datetime(original_df["Date"])
+original_df["Date"] = pd.to_datetime(original_df["Date"], format="%d/%m/%Y", errors='coerce')
 
 # Sắp xếp theo thời gian
 original_df.sort_values(by="Date", inplace=True)
