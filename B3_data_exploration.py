@@ -15,9 +15,9 @@ def run():
     # ==========================================================
     # LOAD DỮ LIỆU ĐÃ LÀM SẠCH
     # ==========================================================
-    print("=" * 60)
-    print("B3 - KHAI PHÁ DỮ LIỆU (EDA)")
-    print("=" * 60)
+    print("=" * 70)
+    print("B3 - KHAI PHÁ DỮ LIỆU (Exploratory Data Analysis - EDA)")
+    print("=" * 70)
 
     # Load từ file đã làm sạch (B2)
     try:
@@ -27,293 +27,184 @@ def run():
     except:
         print("\n⚠️ Không tìm thấy file B2, load từ file gốc...")
         df = pd.read_csv("goldstock v2.csv", sep=";")
-        # Xử lý tương tự B2
+        # Xử lý tương tự B1
         if "Column1" in df.columns:
             df.drop(columns=["Column1"], inplace=True)
         if "Unnamed: 0" in df.columns:
             df.drop(columns=["Unnamed: 0"], inplace=True)
         df.columns = df.columns.str.strip()
-        numeric_cols = ["Volume", "Open", "High", "Low", "Close/Last"]
+        numeric_cols = ["Open", "High", "Low", "Close/Last", "Volume"]
         for col in numeric_cols:
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors='coerce')
-        try:
+        if "Date" in df.columns:
             df["Date"] = pd.to_datetime(df["Date"], format="%d/%m/%Y", errors='coerce')
-        except:
-            df["Date"] = pd.to_datetime(df["Date"], infer_datetime_format=True, errors='coerce')
         df = df.dropna()
         df = df[df.duplicated() == False].reset_index(drop=True)
 
+    # Thêm cột phục vụ phân tích
+    df['Year'] = df['Date'].dt.year
+    df['Month'] = df['Date'].dt.month
+    df['Price_Range'] = df['High'] - df['Low']  # Biến động giá hàng ngày
+    
     quantitative_cols = df.select_dtypes(include=["int64", "float64"]).columns.tolist()
 
     # ==========================================================
-    # B3.1 - PHÂN TÍCH ĐƠN BIẾN (UNIVARIATE ANALYSIS)
+    # B3.1 - PHÂN TÍCH ĐƠN BIẾN: BIỂU ĐỒ ĐƯỜNG (LINE CHART)
     # ==========================================================
-    print("\n" + "=" * 60)
-    print("B3.1 - PHÂN TÍCH ĐƠN BIẾN (UNIVARIATE ANALYSIS)")
-    print("=" * 60)
-
-    for col in quantitative_cols:
-        print(f"\n{'='*60}")
-        print(f"Phân tích: {col}")
-        print(f"{'='*60}")
-        
-        # Thống kê mô tả
-        print(f"\n📊 THỐNG KÊ MÔ TẢ:")
-        stats_dict = {
-            "Count": df[col].count(),
-            "Mean": df[col].mean(),
-            "Std Dev": df[col].std(),
-            "Min": df[col].min(),
-            "25%": df[col].quantile(0.25),
-            "Median": df[col].median(),
-            "75%": df[col].quantile(0.75),
-            "Max": df[col].max(),
-            "Range": df[col].max() - df[col].min(),
-            "Skewness": df[col].skew(),
-            "Kurtosis": df[col].kurtosis()
-        }
-        
-        for key, value in stats_dict.items():
-            print(f"   {key:<15}: {value:>15,.2f}")
-        
-        # Kiểm tra phân phối
-        print(f"\n📈 KIỂM TRA PHÂN PHỐI:")
-        if abs(df[col].skew()) < 0.5:
-            print(f"   ✓ Phân phối gần đối xứng (Skewness = {df[col].skew():.2f})")
-        elif df[col].skew() > 0:
-            print(f"   → Phân phối lệch phải (Skewness = {df[col].skew():.2f})")
-        else:
-            print(f"   ← Phân phối lệch trái (Skewness = {df[col].skew():.2f})")
-        
-        # Visualize
-        fig, axes = plt.subplots(1, 3, figsize=(18, 5))
-        
-        # Histogram with KDE
-        axes[0].hist(df[col], bins=30, alpha=0.7, color='steelblue', edgecolor='black')
-        axes[0].axvline(df[col].mean(), color='red', linestyle='--', linewidth=2, label=f'Mean = {df[col].mean():.2f}')
-        axes[0].axvline(df[col].median(), color='green', linestyle='--', linewidth=2, label=f'Median = {df[col].median():.2f}')
-        axes[0].set_title(f'Histogram: {col}', fontsize=12, fontweight='bold')
-        axes[0].set_xlabel(col)
-        axes[0].set_ylabel('Frequency')
-        axes[0].legend()
-        axes[0].grid(True, alpha=0.3)
-        
-        # KDE Plot
-        df[col].plot(kind='kde', ax=axes[1], color='steelblue', linewidth=2)
-        axes[1].axvline(df[col].mean(), color='red', linestyle='--', linewidth=2, label='Mean')
-        axes[1].axvline(df[col].median(), color='green', linestyle='--', linewidth=2, label='Median')
-        axes[1].set_title(f'Density Plot: {col}', fontsize=12, fontweight='bold')
-        axes[1].set_xlabel(col)
-        axes[1].set_ylabel('Density')
-        axes[1].legend()
-        axes[1].grid(True, alpha=0.3)
-        
-        # Box Plot
-        axes[2].boxplot(df[col], vert=True, patch_artist=True,
-                        boxprops=dict(facecolor='lightblue', color='black'),
-                        whiskerprops=dict(color='black'),
-                        capprops=dict(color='black'),
-                        medianprops=dict(color='red', linewidth=2))
-        axes[2].set_title(f'Box Plot: {col}', fontsize=12, fontweight='bold')
-        axes[2].set_ylabel(col)
-        axes[2].grid(True, alpha=0.3, axis='y')
-        
-        # Add statistics text
-        Q1 = df[col].quantile(0.25)
-        Q3 = df[col].quantile(0.75)
-        IQR = Q3 - Q1
-        outliers = ((df[col] < Q1 - 1.5*IQR) | (df[col] > Q3 + 1.5*IQR)).sum()
-        axes[2].text(0.5, 0.02, f'Outliers: {outliers}', 
-                    transform=axes[2].transAxes,
-                    bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8),
-                    horizontalalignment='center')
-        
-        plt.tight_layout()
-        plt.savefig(f"B3_univariate_{col.replace('/', '_')}.png", dpi=300, bbox_inches='tight')
-        print(f"   ✓ Biểu đồ đã lưu: B3_univariate_{col.replace('/', '_')}.png")
-        try:
-            plt.close(fig)
-        except Exception:
-            pass
-
-    # ==========================================================
-    # B3.2 - PHÂN TÍCH ĐA BIẾN (BIVARIATE ANALYSIS)
-    # ==========================================================
-    print("\n" + "=" * 60)
-    print("B3.2 - PHÂN TÍCH ĐA BIẾN (BIVARIATE ANALYSIS)")
-    print("=" * 60)
-
-    # Phân tích quan hệ giữa các cặp biến
-    pairs = [
-        ("Open", "Close/Last"),
-        ("Low", "High"),
-        ("Volume", "Close/Last"),
-        ("Open", "Volume")
-    ]
-
-    for x_col, y_col in pairs:
-        print(f"\n{'='*60}")
-        print(f"Phân tích quan hệ: {x_col} vs {y_col}")
-        print(f"{'='*60}")
-        
-        # Tính tương quan
-        correlation = df[x_col].corr(df[y_col])
-        print(f"\n📊 Hệ số tương quan Pearson: {correlation:.4f}")
-        
-        if abs(correlation) > 0.8:
-            print(f"   → Tương quan RẤT MẠNH")
-        elif abs(correlation) > 0.6:
-            print(f"   → Tương quan MẠNH")
-        elif abs(correlation) > 0.4:
-            print(f"   → Tương quan VỪA PHẢI")
-        elif abs(correlation) > 0.2:
-            print(f"   → Tương quan YẾU")
-        else:
-            print(f"   → Tương quan RẤT YẾU hoặc KHÔNG CÓ")
-        
-        if correlation > 0:
-            print(f"   ↗ Quan hệ THUẬN (khi {x_col} tăng, {y_col} cũng tăng)")
-        else:
-            print(f"   ↘ Quan hệ NGHỊCH (khi {x_col} tăng, {y_col} giảm)")
-        
-        # Visualize
-        fig, axes = plt.subplots(1, 2, figsize=(16, 6))
-        
-        # Scatter plot with regression line
-        axes[0].scatter(df[x_col], df[y_col], alpha=0.5, s=50, color='steelblue', edgecolors='black', linewidth=0.5)
-        
-        # Add trend line
-        z = np.polyfit(df[x_col], df[y_col], 1)
-        p = np.poly1d(z)
-        axes[0].plot(df[x_col].sort_values(), p(df[x_col].sort_values()), 
-                    "r--", linewidth=2, label=f'Trend line (r={correlation:.3f})')
-        
-        axes[0].set_xlabel(x_col, fontsize=11, fontweight='bold')
-        axes[0].set_ylabel(y_col, fontsize=11, fontweight='bold')
-        axes[0].set_title(f'Scatter Plot: {x_col} vs {y_col}', fontsize=12, fontweight='bold')
-        axes[0].legend()
-        axes[0].grid(True, alpha=0.3)
-        
-        # Hexbin plot (for density)
-        hexbin = axes[1].hexbin(df[x_col], df[y_col], gridsize=25, cmap='Blues', mincnt=1)
-        axes[1].set_xlabel(x_col, fontsize=11, fontweight='bold')
-        axes[1].set_ylabel(y_col, fontsize=11, fontweight='bold')
-        axes[1].set_title(f'Density Plot: {x_col} vs {y_col}', fontsize=12, fontweight='bold')
-        plt.colorbar(hexbin, ax=axes[1], label='Count')
-        axes[1].grid(True, alpha=0.3)
-        
-        plt.tight_layout()
-        plt.savefig(f"B3_bivariate_{x_col.replace('/', '_')}_vs_{y_col.replace('/', '_')}.png", 
-                    dpi=300, bbox_inches='tight')
-        print(f"   ✓ Biểu đồ đã lưu: B3_bivariate_{x_col.replace('/', '_')}_vs_{y_col.replace('/', '_')}.png")
-        try:
-            plt.close(fig)
-        except Exception:
-            pass
-
-    # ==========================================================
-    # B3.3 - PHÂN TÍCH CHUỖI THỜI GIAN (TIME SERIES ANALYSIS)
-    # ==========================================================
-    print("\n" + "=" * 60)
-    print("B3.3 - PHÂN TÍCH CHUỖI THỜI GIAN")
-    print("=" * 60)
-
-    print("\n📊 THỐNG KÊ CHUỖI THỜI GIAN:")
+    print("\n" + "=" * 70)
+    print("B3.1 - PHÂN TÍCH ĐƠN BIẾN: BIỂU ĐỒ ĐƯỜNG")
+    print("=" * 70)
+    print("\n📊 Biểu đồ: Close/Last - Xu hướng giá vàng theo thời gian")
     print(f"   Khoảng thời gian: {df['Date'].min().date()} → {df['Date'].max().date()}")
-    print(f"   Số ngày giao dịch: {len(df)}")
     print(f"   Giá Close trung bình: ${df['Close/Last'].mean():.2f}")
-    print(f"   Giá Close cao nhất: ${df['Close/Last'].max():.2f} (ngày {df.loc[df['Close/Last'].idxmax(), 'Date'].date()})")
-    print(f"   Giá Close thấp nhất: ${df['Close/Last'].min():.2f} (ngày {df.loc[df['Close/Last'].idxmin(), 'Date'].date()})")
-    print(f"   Biên độ giá: ${df['Close/Last'].max() - df['Close/Last'].min():.2f}")
+    print(f"   Giá Close cao nhất: ${df['Close/Last'].max():.2f}")
+    print(f"   Giá Close thấp nhất: ${df['Close/Last'].min():.2f}")
     print(f"   Độ biến động (Std): ${df['Close/Last'].std():.2f}")
 
-    # Visualize time series
-    fig, axes = plt.subplots(3, 1, figsize=(16, 12))
-
-    # Price trend
-    axes[0].plot(df['Date'], df['Close/Last'], linewidth=2, color='steelblue', label='Close Price')
-    axes[0].fill_between(df['Date'], df['Low'], df['High'], alpha=0.2, color='lightblue', label='High-Low Range')
-    axes[0].axhline(y=df['Close/Last'].mean(), color='red', linestyle='--', linewidth=2, label='Mean Price')
-    axes[0].set_xlabel('Date', fontsize=11, fontweight='bold')
-    axes[0].set_ylabel('Price (USD/oz)', fontsize=11, fontweight='bold')
-    axes[0].set_title('Xu hướng giá vàng (Gold Price Trend)', fontsize=13, fontweight='bold')
-    axes[0].legend()
-    axes[0].grid(True, alpha=0.3)
-
-    # Volume over time
-    axes[1].bar(df['Date'], df['Volume'], color='steelblue', alpha=0.7, width=1)
-    axes[1].axhline(y=df['Volume'].mean(), color='red', linestyle='--', linewidth=2, label='Mean Volume')
-    axes[1].set_xlabel('Date', fontsize=11, fontweight='bold')
-    axes[1].set_ylabel('Volume', fontsize=11, fontweight='bold')
-    axes[1].set_title('Khối lượng giao dịch (Trading Volume)', fontsize=13, fontweight='bold')
-    axes[1].legend()
-    axes[1].grid(True, alpha=0.3, axis='y')
-
-    # Daily returns (% change)
-    df['Daily_Return'] = df['Close/Last'].pct_change() * 100
-    axes[2].plot(df['Date'], df['Daily_Return'], linewidth=1.5, color='steelblue', alpha=0.7)
-    axes[2].axhline(y=0, color='black', linestyle='-', linewidth=1)
-    axes[2].fill_between(df['Date'], 0, df['Daily_Return'], 
-                         where=(df['Daily_Return'] > 0), color='green', alpha=0.3, label='Positive Return')
-    axes[2].fill_between(df['Date'], 0, df['Daily_Return'], 
-                         where=(df['Daily_Return'] < 0), color='red', alpha=0.3, label='Negative Return')
-    axes[2].set_xlabel('Date', fontsize=11, fontweight='bold')
-    axes[2].set_ylabel('Daily Return (%)', fontsize=11, fontweight='bold')
-    axes[2].set_title('Biến động hàng ngày (Daily Returns)', fontsize=13, fontweight='bold')
-    axes[2].legend()
-    axes[2].grid(True, alpha=0.3)
-
+    # Vẽ biểu đồ đường
+    fig, ax = plt.subplots(figsize=(16, 6))
+    ax.plot(df['Date'], df['Close/Last'], linewidth=2.5, color='steelblue', label='Close Price')
+    ax.fill_between(df['Date'], df['Low'], df['High'], alpha=0.2, color='lightblue', label='High-Low Range')
+    ax.axhline(y=df['Close/Last'].mean(), color='red', linestyle='--', linewidth=2, label=f'Mean: ${df["Close/Last"].mean():.2f}')
+    
+    ax.set_xlabel('Ngày (Date)', fontsize=12, fontweight='bold')
+    ax.set_ylabel('Giá (USD/oz)', fontsize=12, fontweight='bold')
+    ax.set_title('Xu hướng giá vàng theo thời gian (Gold Price Trend)', fontsize=14, fontweight='bold')
+    ax.legend(fontsize=11, loc='best')
+    ax.grid(True, alpha=0.3)
+    
     plt.tight_layout()
-    plt.savefig("B3_time_series_analysis.png", dpi=300, bbox_inches='tight')
-    print("\n   ✓ Biểu đồ chuỗi thời gian đã lưu: B3_time_series_analysis.png")
+    plt.savefig("B3_line_chart_close_price.png", dpi=300, bbox_inches='tight')
+    print("\n   ✓ Biểu đồ đã lưu: B3_line_chart_close_price.png")
     try:
         plt.close(fig)
     except Exception:
         pass
 
     # ==========================================================
-    # B3.4 - PHÂN TÍCH KHỐI LƯỢNG (VOLUME ANALYSIS)
+    # B3.2 - PHÂN TÍCH ĐƠN BIẾN: HISTOGRAM (KHỐI LƯỢNG GIAO DỊCH)
     # ==========================================================
-    print("\n" + "=" * 60)
-    print("B3.4 - PHÂN TÍCH KHỐI LƯỢNG GIAO DỊCH")
-    print("=" * 60)
-
-    print("\n📊 THỐNG KÊ KHỐI LƯỢNG:")
+    print("\n" + "=" * 70)
+    print("B3.2 - PHÂN TÍCH ĐƠN BIẾN: HISTOGRAM - PHÂN PHỐI VOLUME")
+    print("=" * 70)
+    print("\n📊 Biểu đồ: Volume - Phân phối khối lượng giao dịch")
     print(f"   Khối lượng trung bình: {df['Volume'].mean():,.0f}")
-    print(f"   Khối lượng cao nhất: {df['Volume'].max():,.0f} (ngày {df.loc[df['Volume'].idxmax(), 'Date'].date()})")
-    print(f"   Khối lượng thấp nhất: {df['Volume'].min():,.0f} (ngày {df.loc[df['Volume'].idxmin(), 'Date'].date()})")
-    print(f"   Tổng khối lượng: {df['Volume'].sum():,.0f}")
+    print(f"   Khối lượng cao nhất: {df['Volume'].max():,.0f}")
+    print(f"   Khối lượng thấp nhất: {df['Volume'].min():,.0f}")
     print(f"   Độ lệch chuẩn: {df['Volume'].std():,.0f}")
+    print(f"   Skewness (Độ lệch): {df['Volume'].skew():.3f}")
 
-    # Volume distribution
-    fig, axes = plt.subplots(1, 2, figsize=(16, 6))
-
-    # Histogram
-    axes[0].hist(df['Volume'], bins=30, alpha=0.7, color='steelblue', edgecolor='black')
-    axes[0].axvline(df['Volume'].mean(), color='red', linestyle='--', linewidth=2, 
-                    label=f'Mean = {df["Volume"].mean():,.0f}')
-    axes[0].axvline(df['Volume'].median(), color='green', linestyle='--', linewidth=2,
-                    label=f'Median = {df["Volume"].median():,.0f}')
-    axes[0].set_xlabel('Volume', fontsize=11, fontweight='bold')
-    axes[0].set_ylabel('Frequency', fontsize=11, fontweight='bold')
-    axes[0].set_title('Phân phối khối lượng (Volume Distribution)', fontsize=12, fontweight='bold')
-    axes[0].legend()
-    axes[0].grid(True, alpha=0.3)
-
-    # Volume vs Price
-    scatter = axes[1].scatter(df['Volume'], df['Close/Last'], 
-                             c=range(len(df)), cmap='viridis', 
-                             alpha=0.6, s=50, edgecolors='black', linewidth=0.5)
-    axes[1].set_xlabel('Volume', fontsize=11, fontweight='bold')
-    axes[1].set_ylabel('Close Price (USD/oz)', fontsize=11, fontweight='bold')
-    axes[1].set_title('Quan hệ Volume vs Price', fontsize=12, fontweight='bold')
-    plt.colorbar(scatter, ax=axes[1], label='Time Index')
-    axes[1].grid(True, alpha=0.3)
-
+    fig, ax = plt.subplots(figsize=(14, 6))
+    ax.hist(df['Volume'], bins=40, alpha=0.7, color='steelblue', edgecolor='black', linewidth=1.5)
+    ax.axvline(df['Volume'].mean(), color='red', linestyle='--', linewidth=2.5, label=f'Mean: {df["Volume"].mean():,.0f}')
+    ax.axvline(df['Volume'].median(), color='green', linestyle='--', linewidth=2.5, label=f'Median: {df["Volume"].median():,.0f}')
+    
+    ax.set_xlabel('Khối lượng giao dịch (Volume)', fontsize=12, fontweight='bold')
+    ax.set_ylabel('Tần suất (Frequency)', fontsize=12, fontweight='bold')
+    ax.set_title('Phân phối khối lượng giao dịch (Volume Distribution)', fontsize=14, fontweight='bold')
+    ax.legend(fontsize=11, loc='best')
+    ax.grid(True, alpha=0.3, axis='y')
+    
     plt.tight_layout()
-    plt.savefig("B3_volume_analysis.png", dpi=300, bbox_inches='tight')
-    print("\n   ✓ Biểu đồ phân tích volume đã lưu: B3_volume_analysis.png")
+    plt.savefig("B3_histogram_volume.png", dpi=300, bbox_inches='tight')
+    print("\n   ✓ Biểu đồ đã lưu: B3_histogram_volume.png")
+    try:
+        plt.close(fig)
+    except Exception:
+        pass
+
+    # ==========================================================
+    # B3.3 - PHÂN TÍCH ĐA BIẾN: SCATTER PLOT (VOLUME vs CLOSE/LAST)
+    # ==========================================================
+    print("\n" + "=" * 70)
+    print("B3.3 - PHÂN TÍCH ĐA BIẾN: SCATTER PLOT")
+    print("=" * 70)
+    print("\n📊 Biểu đồ: Volume vs Close/Last - Mối quan hệ khối lượng và giá")
+    
+    # Tính tương quan
+    correlation = df['Volume'].corr(df['Close/Last'])
+    print(f"   Hệ số tương quan Pearson: {correlation:.4f}")
+    
+    if abs(correlation) > 0.8:
+        print(f"   → Tương quan RẤT MẠNH")
+    elif abs(correlation) > 0.6:
+        print(f"   → Tương quan MẠNH")
+    elif abs(correlation) > 0.4:
+        print(f"   → Tương quan VỪA PHẢI")
+    elif abs(correlation) > 0.2:
+        print(f"   → Tương quan YẾU")
+    else:
+        print(f"   → Tương quan RẤT YẾU hoặc KHÔNG CÓ")
+
+    fig, ax = plt.subplots(figsize=(14, 7))
+    scatter = ax.scatter(df['Volume'], df['Close/Last'], 
+                        c=range(len(df)), cmap='viridis', 
+                        alpha=0.6, s=80, edgecolors='black', linewidth=0.8)
+    
+    # Thêm đường xu hướng
+    z = np.polyfit(df['Volume'], df['Close/Last'], 1)
+    p = np.poly1d(z)
+    volume_sorted = df['Volume'].sort_values()
+    ax.plot(volume_sorted, p(volume_sorted), "r--", linewidth=2.5, label=f'Trend line (r={correlation:.3f})')
+    
+    ax.set_xlabel('Khối lượng giao dịch (Volume)', fontsize=12, fontweight='bold')
+    ax.set_ylabel('Giá đóng cửa (Close Price - USD/oz)', fontsize=12, fontweight='bold')
+    ax.set_title('Mối quan hệ giữa Khối lượng giao dịch và Giá vàng', fontsize=14, fontweight='bold')
+    ax.legend(fontsize=11, loc='best')
+    ax.grid(True, alpha=0.3)
+    cbar = plt.colorbar(scatter, ax=ax, label='Thứ tự thời gian')
+    
+    plt.tight_layout()
+    plt.savefig("B3_scatter_volume_vs_price.png", dpi=300, bbox_inches='tight')
+    print("\n   ✓ Biểu đồ đã lưu: B3_scatter_volume_vs_price.png")
+    try:
+        plt.close(fig)
+    except Exception:
+        pass
+
+    # ==========================================================
+    # B3.4 - PHÂN TÍCH ĐA BIẾN: BOXPLOT (BIẾN ĐỘNG GIÁ QUA CÁC NĂM)
+    # ==========================================================
+    print("\n" + "=" * 70)
+    print("B3.4 - PHÂN TÍCH ĐA BIẾN: BOXPLOT - BIẾN ĐỘNG GIÁ QUA CÁC NĂM")
+    print("=" * 70)
+    print("\n📊 Biểu đồ: Boxplot so sánh mức độ biến động giá qua các năm")
+    print(f"   Biến động giá = High - Low (khoảng dao động hàng ngày)")
+    
+    # Thống kê biến động theo năm
+    print(f"\n   Thống kê biến động theo năm:")
+    yearly_stats = df.groupby('Year')['Price_Range'].describe()
+    print(yearly_stats)
+
+    fig, ax = plt.subplots(figsize=(14, 7))
+    
+    # Chuẩn bị dữ liệu cho boxplot
+    years = sorted(df['Year'].unique())
+    data_by_year = [df[df['Year'] == year]['Price_Range'].values for year in years]
+    
+    # Vẽ boxplot
+    bp = ax.boxplot(data_by_year, labels=years, patch_artist=True,
+                    widths=0.6,
+                    boxprops=dict(facecolor='lightblue', color='black', linewidth=1.5),
+                    whiskerprops=dict(color='black', linewidth=1.5),
+                    capprops=dict(color='black', linewidth=1.5),
+                    medianprops=dict(color='red', linewidth=2.5),
+                    flierprops=dict(marker='o', markerfacecolor='red', markersize=6, alpha=0.5))
+    
+    ax.set_xlabel('Năm (Year)', fontsize=12, fontweight='bold')
+    ax.set_ylabel('Biến động giá hàng ngày (USD/oz)', fontsize=12, fontweight='bold')
+    ax.set_title('So sánh mức độ biến động giá vàng qua các năm', fontsize=14, fontweight='bold')
+    ax.grid(True, alpha=0.3, axis='y')
+    
+    # Thêm ghi chú
+    ax.text(0.02, 0.98, 'Biến động giá = High - Low (khoảng dao động hàng ngày)', 
+           transform=ax.transAxes, fontsize=10, verticalalignment='top',
+           bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
+    
+    plt.tight_layout()
+    plt.savefig("B3_boxplot_price_volatility_by_year.png", dpi=300, bbox_inches='tight')
+    print("\n   ✓ Biểu đồ đã lưu: B3_boxplot_price_volatility_by_year.png")
     try:
         plt.close(fig)
     except Exception:
@@ -322,21 +213,27 @@ def run():
     # ==========================================================
     # B3.5 - TỔNG HỢP & KẾT LUẬN
     # ==========================================================
-    print("\n" + "=" * 60)
+    print("\n" + "=" * 70)
     print("B3.5 - TỔNG HỢP & KẾT LUẬN")
-    print("=" * 60)
+    print("=" * 70)
 
-    print("\n✅ NHỮNG PHÁT HIỆN CHÍNH:")
-    print("   1. Phân tích đơn biến cho thấy phân phối của các biến giá")
-    print("   2. Phân tích đa biến phát hiện tương quan cao giữa Open, High, Low, Close")
-    print("   3. Chuỗi thời gian cho thấy xu hướng và biến động giá vàng")
-    print("   4. Volume có mối quan hệ với biến động giá")
+    print("\n✅ NHỮNG PHÁT HIỆN CHÍNH TỪ EDA:")
+    print("\n1️⃣  PHÂN TÍCH ĐƠN BIẾN:")
+    print(f"   • Giá Close/Last: Trung bình ${df['Close/Last'].mean():.2f}, dao động từ ${df['Close/Last'].min():.2f} - ${df['Close/Last'].max():.2f}")
+    print(f"   • Volume: Trung bình {df['Volume'].mean():,.0f}, phân phối {('lệch phải' if df['Volume'].skew() > 0 else 'lệch trái')}")
+    
+    print(f"\n2️⃣  PHÂN TÍCH ĐA BIẾN:")
+    correlation = df['Volume'].corr(df['Close/Last'])
+    print(f"   • Mối quan hệ Volume vs Close: r = {correlation:.4f} ({('yếu' if abs(correlation) < 0.3 else 'trung bình' if abs(correlation) < 0.6 else 'mạnh')})")
+    
+    print(f"\n3️⃣  PHÂN TÍCH BIẾN ĐỘNG GIÁ:")
+    print(f"   • Biến động giá trung bình: ${df['Price_Range'].mean():.2f}/oz")
+    print(f"   • Năm {df.groupby('Year')['Price_Range'].mean().idxmax()}: Biến động cao nhất (${df.groupby('Year')['Price_Range'].mean().max():.2f})")
+    print(f"   • Năm {df.groupby('Year')['Price_Range'].mean().idxmin()}: Biến động thấp nhất (${df.groupby('Year')['Price_Range'].mean().min():.2f})")
 
-    print("\n" + "=" * 60)
-    print("KẾT THÚC B3 - KHAI PHÁ DỮ LIỆU")
-    print("=" * 60)
+    print("\n" + "=" * 70)
+    print("KẾT THÚC B3 - KHAI PHÁ DỮ LIỆU (EDA)")
+    print("=" * 70 + "\n")
 
 if __name__ == "__main__":
     run()
-print("KẾT THÚC B3 - KHAI PHÁ DỮ LIỆU")
-print("=" * 60)
