@@ -1,6 +1,5 @@
 import io
 import os
-import glob
 import contextlib
 import pandas as pd
 import streamlit as st
@@ -12,11 +11,436 @@ import B3_data_exploration as B3
 import B4_correlation_pca as B4
 import B5_model_gui as B5
 
-st.set_page_config(page_title="Gold Price Project - B1→B5", layout="wide", page_icon="🏁")
+st.set_page_config(page_title="Gold Price Project - B1→B5", layout="wide", page_icon="💰")
 
-st.title("🏁 Gold Price Data Mining — Orchestrator (B1 → B5)")
+# Custom CSS for better styling
+st.markdown("""
+<style>
+    /* Import Google Fonts */
+    @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;700&display=swap');
+    
+    /* Global styling */
+    html, body, [class*="css"] {
+        font-family: 'Poppins', sans-serif;
+    }
+    
+    /* Main container */
+    .block-container {
+        padding-top: 2rem;
+        padding-bottom: 2rem;
+        background: linear-gradient(135deg, #000000 0%, #1a1a1a 50%, #000000 100%);
+        background-size: 200% 200%;
+        animation: gradientShift 15s ease infinite;
+    }
+    
+    @keyframes gradientShift {
+        0%, 100% { background-position: 0% 50%; }
+        50% { background-position: 100% 50%; }
+    }
+    
+    /* Override Streamlit default background */
+    .main {
+        background-color: #000000;
+    }
+    
+    .stApp {
+        background: #000000;
+    }
+    
+    /* Main title styling with animation */
+    .main-title {
+        background: linear-gradient(90deg, #FFD700 0%, #FFA500 30%, #FF8C00 60%, #FFD700 100%);
+        background-size: 200% auto;
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+        font-size: 3.5rem;
+        font-weight: 800;
+        text-align: center;
+        padding: 1.5rem 0;
+        margin-bottom: 0.5rem;
+        text-shadow: 2px 2px 4px rgba(0,0,0,0.1);
+        animation: shine 3s linear infinite;
+        letter-spacing: 2px;
+    }
+    
+    @keyframes shine {
+        to { background-position: 200% center; }
+    }
+    
+    /* Subtitle styling */
+    .subtitle {
+        text-align: center;
+        color: #e0e0e0;
+        font-size: 1.2rem;
+        margin-bottom: 2.5rem;
+        font-weight: 500;
+        text-shadow: 1px 1px 2px rgba(255,255,255,0.1);
+    }
+    
+    /* Tab styling with gradient */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 10px;
+        background: transparent;
+        padding: 10px;
+        border-radius: 15px;
+    }
+    
+    .stTabs [data-baseweb="tab"] {
+        height: 55px;
+        padding: 12px 24px;
+        background: linear-gradient(135deg, #2a2a2a 0%, #1a1a1a 100%);
+        border-radius: 12px;
+        font-weight: 600;
+        color: #e0e0e0;
+        transition: all 0.3s ease;
+        border: 2px solid transparent;
+        box-shadow: 0 2px 8px rgba(255,215,0,0.2);
+    }
+    
+    .stTabs [data-baseweb="tab"]:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        border-color: #FFD700;
+    }
+    
+    .stTabs [aria-selected="true"] {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white !important;
+        transform: scale(1.05);
+        box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
+    }
+    
+    .stTabs [aria-selected="true"] button {
+        color: white !important;
+    }
+    
+    .stTabs [data-baseweb="tab"] button {
+        color: inherit;
+    }
+    
+    /* Info boxes styling */
+    .stAlert {
+        border-radius: 15px;
+        border-left: 6px solid #FFD700;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        animation: fadeInUp 0.6s ease;
+    }
+    
+    @keyframes fadeInUp {
+        from {
+            opacity: 0;
+            transform: translateY(20px);
+        }
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+    
+    /* Metric styling */
+    [data-testid="stMetricValue"] {
+        font-size: 2rem;
+        font-weight: 700;
+        background: linear-gradient(90deg, #FFD700 0%, #FFA500 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+    }
+    
+    /* Sidebar styling with gradient */
+    section[data-testid="stSidebar"] {
+        background: linear-gradient(180deg, #1e3c72 0%, #2a5298 50%, #1e3c72 100%);
+        color: white;
+        box-shadow: 4px 0 20px rgba(0,0,0,0.3);
+    }
+    
+    section[data-testid="stSidebar"] h3, 
+    section[data-testid="stSidebar"] h2 {
+        color: #FFD700 !important;
+        text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+    }
+    
+    section[data-testid="stSidebar"] .stMarkdown {
+        color: white !important;
+    }
+    
+    section[data-testid="stSidebar"] hr {
+        border-color: rgba(255, 215, 0, 0.3);
+    }
+    
+    /* Dataframe styling */
+    .dataframe {
+        border-radius: 12px;
+        overflow: hidden;
+        box-shadow: 0 4px 15px rgba(255, 215, 0, 0.2);
+        border: 1px solid rgba(255, 215, 0, 0.3);
+    }
+    
+    .dataframe thead tr th {
+        background: linear-gradient(135deg, #2a2a2a 0%, #1a1a1a 100%) !important;
+        color: #FFD700 !important;
+        font-weight: 600 !important;
+        border-bottom: 2px solid #FFD700 !important;
+    }
+    
+    .dataframe tbody tr {
+        background-color: rgba(26, 26, 26, 0.5) !important;
+        transition: background-color 0.2s ease;
+    }
+    
+    .dataframe tbody tr:hover {
+        background-color: rgba(255, 215, 0, 0.1) !important;
+    }
+    
+    /* Professional Cards */
+    .pro-card {
+        background: linear-gradient(135deg, #2a2a2a 0%, #1a1a1a 100%);
+        border: 1px solid rgba(255, 215, 0, 0.3);
+        border-radius: 15px;
+        padding: 20px;
+        box-shadow: 0 4px 20px rgba(255, 215, 0, 0.15);
+        transition: all 0.3s ease;
+    }
+    
+    .pro-card:hover {
+        transform: translateY(-5px);
+        box-shadow: 0 8px 30px rgba(255, 215, 0, 0.3);
+        border-color: #FFD700;
+    }
+    
+    /* Status Badges */
+    .status-badge {
+        display: inline-block;
+        padding: 4px 12px;
+        border-radius: 20px;
+        font-size: 0.85rem;
+        font-weight: 600;
+        margin: 5px;
+    }
+    
+    .status-success {
+        background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+        color: white;
+    }
+    
+    .status-warning {
+        background: linear-gradient(135deg, #ffc107 0%, #ff9800 100%);
+        color: #000;
+    }
+    
+    .status-info {
+        background: linear-gradient(135deg, #17a2b8 0%, #138496 100%);
+        color: white;
+    }
+    
+    /* Progress Indicator */
+    .progress-bar {
+        width: 100%;
+        height: 6px;
+        background: rgba(255, 215, 0, 0.2);
+        border-radius: 10px;
+        overflow: hidden;
+        margin: 10px 0;
+    }
+    
+    .progress-fill {
+        height: 100%;
+        background: linear-gradient(90deg, #FFD700 0%, #FFA500 100%);
+        border-radius: 10px;
+        animation: progressAnimation 2s ease-in-out;
+    }
+    
+    @keyframes progressAnimation {
+        from { width: 0%; }
+        to { width: 100%; }
+    }
+    
+    /* Section Divider */
+    .section-divider {
+        height: 2px;
+        background: linear-gradient(90deg, transparent 0%, #FFD700 50%, transparent 100%);
+        margin: 30px 0;
+    }
+    
+    /* Info Box Professional */
+    .info-box {
+        background: linear-gradient(135deg, rgba(23, 162, 184, 0.15) 0%, rgba(19, 132, 150, 0.15) 100%);
+        border-left: 4px solid #17a2b8;
+        border-radius: 8px;
+        padding: 15px 20px;
+        margin: 15px 0;
+        color: #87ceeb;
+    }
+    
+    /* Code Block Enhancement */
+    .stCodeBlock {
+        background: #1a1a1a !important;
+        border: 1px solid rgba(255, 215, 0, 0.2) !important;
+        border-radius: 10px !important;
+    }
+    
+    /* Metric Enhancement */
+    [data-testid="stMetricLabel"] {
+        color: #b0b0b0;
+        font-size: 0.9rem;
+        font-weight: 500;
+    }
+    
+    /* Image styling */
+    img {
+        border-radius: 12px;
+        box-shadow: 0 4px 20px rgba(255, 215, 0, 0.2);
+        transition: transform 0.3s ease, box-shadow 0.3s ease;
+        border: 1px solid rgba(255, 215, 0, 0.2);
+    }
+    
+    img:hover {
+        transform: scale(1.03);
+        box-shadow: 0 8px 35px rgba(255, 215, 0, 0.4);
+        border-color: #FFD700;
+    }
+    
+    /* Expander styling */
+    .streamlit-expanderHeader {
+        background: linear-gradient(90deg, #2a2a2a 0%, #1a1a1a 100%);
+        border-radius: 10px;
+        font-weight: 600;
+        padding: 12px;
+        transition: all 0.3s ease;
+        color: #e0e0e0;
+    }
+    
+    .streamlit-expanderHeader:hover {
+        background: linear-gradient(90deg, #3a3a3a 0%, #2a2a2a 100%);
+        box-shadow: 0 2px 8px rgba(255,215,0,0.3);
+    }
+    
+    /* Header styling */
+    h1, h2, h3 {
+        color: #FFD700;
+        font-weight: 700;
+        text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+    }
+    
+    /* Caption styling */
+    .caption {
+        color: #b0b0b0;
+        font-style: italic;
+        font-size: 0.95rem;
+    }
+    
+    /* Button styling */
+    .stButton > button {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        border: none;
+        border-radius: 10px;
+        padding: 12px 24px;
+        font-weight: 600;
+        transition: all 0.3s ease;
+        box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+    }
+    
+    .stButton > button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
+    }
+    
+    /* Spinner styling */
+    .stSpinner > div {
+        border-color: #FFD700 transparent transparent transparent !important;
+    }
+    
+    /* Download Button */
+    .stDownloadButton > button {
+        background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+        color: white;
+        border: none;
+        border-radius: 10px;
+        padding: 10px 20px;
+        font-weight: 600;
+        transition: all 0.3s ease;
+        box-shadow: 0 4px 12px rgba(40, 167, 69, 0.3);
+    }
+    
+    .stDownloadButton > button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 20px rgba(40, 167, 69, 0.5);
+    }
+    
+    /* File Info Display */
+    .file-info {
+        background: rgba(255, 215, 0, 0.05);
+        border-left: 3px solid #FFD700;
+        padding: 10px 15px;
+        border-radius: 8px;
+        margin: 10px 0;
+        color: #e0e0e0;
+        font-size: 0.9rem;
+    }
+    
+    /* Success/Info/Warning box enhancements */
+    .stSuccess {
+        background: linear-gradient(135deg, #1a3a1a 0%, #153515 100%);
+        border-radius: 12px;
+        border-left: 5px solid #28a745;
+        color: #90ee90;
+    }
+    
+    .stInfo {
+        background: linear-gradient(135deg, #1a2a3a 0%, #152535 100%);
+        border-radius: 12px;
+        border-left: 5px solid #17a2b8;
+        color: #87ceeb;
+    }
+    
+    .stWarning {
+        background: linear-gradient(135deg, #3a3a1a 0%, #353515 100%);
+        border-radius: 12px;
+        border-left: 5px solid #ffc107;
+        color: #ffeb3b;
+    }
+</style>
+""", unsafe_allow_html=True)
 
-st.sidebar.success("Chọn tab để xem kết quả từng bước.")
+st.markdown('<h1 class="main-title">💰 Gold Price Data Mining Pipeline</h1>', unsafe_allow_html=True)
+st.markdown('<p class="subtitle">📊 Phân Tích & Dự Đoán Giá Vàng Toàn Diện | B1 → B2 → B3 → B4 → B5</p>', unsafe_allow_html=True)
+
+# Add visual separator
+st.markdown("---")
+
+st.sidebar.markdown("---")
+st.sidebar.markdown("### 🌟 Dự Án Data Mining")
+st.sidebar.markdown("**🏆 Phân Tích & Dự Đoán Giá Vàng**")
+st.sidebar.info("""
+🔬 *Phương pháp:* Linear Regression  
+📈 *Dataset:* 2511 ngày (2014-2024)  
+🎯 *Mục tiêu:* Dự đoán giá vàng ngắn hạn
+""")
+st.sidebar.markdown("---")
+st.sidebar.markdown("### 👥 Nhóm Thực Hiện")
+st.sidebar.markdown("""
+<div style='background: rgba(255, 215, 0, 0.1); padding: 15px; border-radius: 10px; margin-bottom: 10px;'>
+    <div style='text-align: center; margin-bottom: 8px;'>
+        <b style='color: #FFD700; font-size: 1.1rem;'>Nguyễn Lê Đăng Khoa</b>
+    </div>
+    <div style='text-align: center; color: #ddd;'>MSSV: 23AI023</div>
+</div>
+<div style='background: rgba(255, 215, 0, 0.1); padding: 15px; border-radius: 10px;'>
+    <div style='text-align: center; margin-bottom: 8px;'>
+        <b style='color: #FFD700; font-size: 1.1rem;'>Trương Tấn Vũ</b>
+    </div>
+    <div style='text-align: center; color: #ddd;'>MSSV: 23AI056</div>
+</div>
+""", unsafe_allow_html=True)
+st.sidebar.markdown("---")
+st.sidebar.success("✨ *Pipeline:* B1 → B2 → B3 → B4 → B5")
+st.sidebar.markdown("---")
+st.sidebar.markdown("""
+<div style='text-align: center; margin-top: 20px;'>
+    <small style='color: #aaa;'>Made with ❤️ using Streamlit</small>
+</div>
+""", unsafe_allow_html=True)
 
 # Helper: capture stdout from run() functions
 @contextlib.contextmanager
@@ -26,12 +450,15 @@ def capture_stdout():
         yield buffer
 
 # Helper: show file if exists
-def show_file_head(path: str, n: int = 10):
+def show_file_head(path: str, n: int = None):
     if os.path.exists(path):
         try:
             df = pd.read_csv(path)
             st.write(f"📄 {os.path.basename(path)} — {len(df)} hàng, {df.shape[1]} cột")
-            st.dataframe(df.head(n), use_container_width=True)
+            if n is None:
+                st.dataframe(df, use_container_width=True, height=600)
+            else:
+                st.dataframe(df.head(n), use_container_width=True)
         except Exception as e:
             st.warning(f"Không thể đọc {path}: {e}")
     else:
@@ -40,7 +467,7 @@ def show_file_head(path: str, n: int = 10):
 # Auto-run all preprocessing steps on first load
 @st.cache_data
 def run_all_preprocessing():
-    """Run B1-B4 once and cache results"""
+    """Run B1-B2-B4 once and cache results"""
     logs = {}
     
     # B1
@@ -53,11 +480,6 @@ def run_all_preprocessing():
         B2.run()
     logs['B2'] = buf.getvalue()
     
-    # B3
-    with capture_stdout() as buf:
-        B3.run()
-    logs['B3'] = buf.getvalue()
-    
     # B4
     with capture_stdout() as buf:
         B4.run()
@@ -66,43 +488,60 @@ def run_all_preprocessing():
     return logs
 
 # Run preprocessing automatically
-with st.spinner("🔄 Đang xử lý dữ liệu (B1→B4)..."):
+with st.spinner("🔄 Đang xử lý dữ liệu (B1, B2, B4)..."):
     preprocessing_logs = run_all_preprocessing()
-
-st.success("✅ Dữ liệu đã được xử lý sẵn (B1→B4). Chọn tab để xem chi tiết.")
 
 # Tabs for steps
 TAB_B1, TAB_B2, TAB_B3, TAB_B4, TAB_B5 = st.tabs([
-    "B1: Mô tả dữ liệu",
-    "B2: Làm sạch dữ liệu",
-    "B3: Khám phá dữ liệu",
-    "B4: Tương quan & PCA",
-    "B5: Mô hình & GUI"
+    "📋 B1: Mô tả dữ liệu",
+    "🧹 B2: Làm sạch dữ liệu",
+    "🔍 B3: Khám phá dữ liệu",
+    "📊 B4: Tương quan & PCA",
+    "🤖 B5: Linear Regression"
 ])
 
 
 with TAB_B1:
-    st.header("B1 — Mô tả dữ liệu")
-    st.caption("Tải và chuẩn hóa dữ liệu, mô tả thống kê, phân loại định lượng/định tính.")
+    st.markdown("### 📋 B1 — Mô tả Dữ liệu")
+    st.caption("📝 Tải và chuẩn hóa dữ liệu, mô tả thống kê, phân loại định lượng/định tính.")
+    st.markdown("---")
+    
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("📊 Bước", "B1", delta="Hoàn thành")
+    with col2:
+        st.metric("📄 Output", "goldstock_processed_B1.csv")
+    with col3:
+        st.metric("🔧 Chức năng", "Mô tả & Chuẩn hóa")
     
     with st.expander("📜 Nhật ký chạy B1", expanded=False):
-        st.code(preprocessing_logs['B1'])
+        st.code(preprocessing_logs['B1'], language='text')
     
-    show_file_head("goldstock_processed_B1.csv")
+    show_file_head("goldstock_processed_B1.csv", n=None)  # Hiển thị toàn bộ data
 
 with TAB_B2:
-    st.header("B2 — Làm sạch dữ liệu")
-    st.caption("Xử lý thiếu, trùng, logic giá và phát hiện ngoại lệ.")
+    st.markdown("### 🧹 B2 — Làm Sạch Dữ liệu")
+    st.caption("🛠️ Xử lý thiếu, trùng, logic giá và phát hiện ngoại lệ.")
+    st.markdown("---")
+    
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("📊 Bước", "B2", delta="Hoàn thành")
+    with col2:
+        st.metric("📄 Output", "goldstock_cleaned_B2.csv")
+    with col3:
+        st.metric("🔧 Chức năng", "Làm sạch & Phát hiện lỗi")
     
     with st.expander("📜 Nhật ký chạy B2", expanded=False):
-        st.code(preprocessing_logs['B2'])
+        st.code(preprocessing_logs['B2'], language='text')
     
     show_file_head("goldstock_cleaned_B2.csv")
     
     # Show outlier plot if exists
     outlier_png = "B2_outliers_detection.png"
     if os.path.exists(outlier_png):
-        st.image(outlier_png, caption="Phát hiện ngoại lệ (IQR)", use_container_width=True)
+        st.markdown("#### 📈 Phát hiện ngoại lệ")
+        st.image(outlier_png, caption="🎯 Phát hiện ngoại lệ bằng phương pháp IQR", use_container_width=True)
 
 with TAB_B3:
     st.header("B3 — Khám phá dữ liệu (EDA)")
@@ -282,22 +721,51 @@ with TAB_B3:
             st.write("   Biến động đang duy trì ở mức cao nhất trong toàn bộ giai đoạn (trung vị đạt mức xấp xỉ 30 USD/oz), cho thấy rủi ro và cơ hội lướt sóng trong ngày đều tăng cao.")
 
 with TAB_B4:
-    st.header("B4 — Ma trận tương quan & PCA")
-    st.caption("Xác định cột giữ/bỏ theo tương quan, trực quan hóa PCA.")
+    st.markdown("### 📊 B4 — Ma Trận Tương Quan & PCA")
+    st.caption("🔗 Xác định cột giữ/bỏ theo tương quan, trực quan hóa giảm chiều.")
+    st.markdown("---")
+    
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("📊 Bước", "B4", delta="Hoàn thành")
+    with col2:
+        st.metric("📄 Feature Selection", "2 features")
+    with col3:
+        st.metric("📄 PCA Output", "2 components")
+    with col4:
+        st.metric("🔧 Chức năng", "Tương quan & Giảm chiều")
     
     with st.expander("📜 Nhật ký chạy B4", expanded=False):
-        st.code(preprocessing_logs['B4'])
+        st.code(preprocessing_logs['B4'], language='text')
     
-    show_file_head("goldstock_selected_features_B4.csv")
-    show_file_head("goldstock_pca_B4.csv")
+    # Show files in columns
+    col_left, col_right = st.columns(2)
+    with col_left:
+        st.markdown("#### 📄 Selected Features")
+        show_file_head("goldstock_selected_features_B4.csv")
+    with col_right:
+        st.markdown("#### 📄 PCA Components")
+        show_file_head("goldstock_pca_B4.csv")
+    
+    st.markdown("---")
+    st.markdown("### 📈 Biểu đồ Phân tích")
     
     # Show correlation & PCA plots
-    for img in ["B4_correlation_matrix.png", "B4_pca_variance_explained.png", "B4_pca_projection.png"]:
+    for img, title, desc in [
+        ("B4_correlation_matrix.png", "🔗 Ma trận Tương quan", "Phân tích tương quan giữa các biến"),
+        ("B4_pca_variance_explained.png", "📊 Phương sai Giải thích", "Scree plot và phương sai tích lũy"),
+        ("B4_pca_projection.png", "🎯 PCA Projection & Biplot", "Chiếu dữ liệu lên không gian 2D")
+    ]:
         if os.path.exists(img):
-            st.image(img, caption=os.path.basename(img), use_container_width=True)
+            st.markdown(f"#### {title}")
+            st.caption(desc)
+            st.image(img, use_container_width=True)
+            st.markdown("---")
 
 with TAB_B5:
-    st.header("B5 — Giao diện mô hình (Streamlit)")
-    st.caption("Phân cụm K-Means và dự đoán Linear Regression.")
+    st.markdown("### 🤖 B5 — Mô Hình Linear Regression & Dự đoán")
+    st.caption("📈 Dự đoán giá vàng ngắn hạn (30/60/120 ngày) bằng Linear Regression.")
+    st.markdown("---")
+    
     # Render B5 module inside this tab
     B5.render_app()
