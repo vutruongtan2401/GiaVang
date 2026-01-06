@@ -38,6 +38,15 @@ def run():
         if col in original_df.columns:
             original_df[col] = pd.to_numeric(original_df[col], errors='coerce')
 
+    # Chuẩn hóa đơn vị giá: một số nguồn giá bị lệch 1 bậc thập phân (23694 -> 2369.4)
+    price_cols = ["Open", "High", "Low", "Close/Last"]
+    price_median = original_df["Close/Last"].median()
+    if price_median > 5000:  # nhận diện giá bị phóng đại 10x
+        for col in price_cols:
+            if col in original_df.columns:
+                original_df[col] = original_df[col] / 10.0
+        print("ℹ️ Đã chuẩn hóa lại đơn vị giá (chia 10) cho các cột Open/High/Low/Close/Last")
+
     # Chuyển Date sang datetime
     try:
         original_df["Date"] = pd.to_datetime(original_df["Date"], format="%d/%m/%Y", errors='coerce')
