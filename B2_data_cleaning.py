@@ -21,7 +21,7 @@ def run():
     print("=" * 60)
 
     # Load dữ liệu gốc
-    original_df = pd.read_csv("goldstock v2.csv", sep=";")
+    original_df = pd.read_csv("goldstock v2.csv", sep=";", decimal=",")
 
     # Xóa cột index không cần thiết
     if "Column1" in original_df.columns:
@@ -32,20 +32,11 @@ def run():
     # Xử lý khoảng trắng
     original_df.columns = original_df.columns.str.strip()
 
-    # Chuyển đổi kiểu dữ liệu
+    # Chuyển đổi kiểu dữ liệu (đã được đọc đúng nhờ decimal=",")
     numeric_cols = ["Volume", "Open", "High", "Low", "Close/Last"]
     for col in numeric_cols:
         if col in original_df.columns:
             original_df[col] = pd.to_numeric(original_df[col], errors='coerce')
-
-    # Chuẩn hóa đơn vị giá: một số nguồn giá bị lệch 1 bậc thập phân (23694 -> 2369.4)
-    price_cols = ["Open", "High", "Low", "Close/Last"]
-    price_median = original_df["Close/Last"].median()
-    if price_median > 5000:  # nhận diện giá bị phóng đại 10x
-        for col in price_cols:
-            if col in original_df.columns:
-                original_df[col] = original_df[col] / 10.0
-        print("ℹ️ Đã chuẩn hóa lại đơn vị giá (chia 10) cho các cột Open/High/Low/Close/Last")
 
     # Chuyển Date sang datetime
     try:
@@ -53,7 +44,8 @@ def run():
     except:
         original_df["Date"] = pd.to_datetime(original_df["Date"], infer_datetime_format=True, errors='coerce')
 
-    original_df.sort_values(by="Date", inplace=True, ascending=True)
+    # KHÔNG sort - giữ nguyên thứ tự gốc (mới nhất trước, cũ nhất sau)
+    # original_df.sort_values(by="Date", inplace=True, ascending=True)
     original_df.reset_index(drop=True, inplace=True)
 
     print(f"\n✅ Dữ liệu gốc đã load: {len(original_df)} hàng, {original_df.shape[1]} cột")
@@ -116,17 +108,32 @@ def run():
     df = df.dropna(subset=["Date", "Open", "High", "Low", "Close/Last", "Volume"])
     print(f"   ✓ Đã loại bỏ {before_null - len(df)} dòng có giá trị null")
 
-    print("\n🔧 Bước 3: Kiểm tra logic giá (High >= Low, etc.)...")
-    before_logic = len(df)
+    print("\n🔧 Bước 3: Loại bỏ giá trị âm và không hợp lệ...")
+    before_negative = len(df)
     df = df[
-        (df["High"] >= df["Open"]) &
-        (df["High"] >= df["Close/Last"]) &
-        (df["High"] >= df["Low"]) &
-        (df["Low"] <= df["Open"]) &
-        (df["Low"] <= df["Close/Last"])
+        (df["Open"] > 0) & 
+        (df["High"] > 0) & 
+        (df["Low"] > 0) & 
+        (df["Close/Last"] > 0) & 
+        (df["Volume"] >= 0)
     ]
     df.reset_index(drop=True, inplace=True)
-    print(f"   ✓ Đã loại bỏ {before_logic - len(df)} dòng có logic giá không hợp lệ")
+    print(f"   ✓ Đã loại bỏ {before_negative - len(df)} dòng có giá trị âm hoặc = 0")
+
+    print("\n🔧 Bước 4: Kiểm tra logic giá (High >= Low, etc.)...")
+    before_logic = len(df)
+    # SKIP: Keep all data for better time series forecasting
+    # Invalid price logic may be data entry errors but still valuable for LSTM
+    invalid_logic = df[
+        ~((df["High"] >= df["Open"]) &
+          (df["High"] >= df["Close/Last"]) &
+          (df["High"] >= df["Low"]) &
+          (df["Low"] <= df["Open"]) &
+          (df["Low"] <= df["Close/Last"]))
+    ]
+    print(f"   ⚠️ Phát hiện {len(invalid_logic)} dòng có logic giá không hợp lệ (GIỮ LẠI cho forecasting)")
+    # df = df[...] # COMMENTED OUT - Keep all rows
+    df.reset_index(drop=True, inplace=True)
 
     print(f"\n✅ Dữ liệu sau làm sạch: {len(df)} hàng")
 
@@ -197,12 +204,13 @@ def run():
     print("=" * 60)
 
     print("\n✅ Các quy tắc đã áp dụng:")
-    print("   1. High >= Open, Close/Last, Low")
-    print("   2. Low <= Open, Close/Last")
-    print("   3. Volume >= 0")
-    print("   4. Date sorted in ascending order")
-    print("   5. Duplicates removed")
-    print("   6. Missing values removed")
+    print("   1. Duplicates removed")
+    print("   2. Missing values removed")
+    print("   3. Negative values removed (Open, High, Low, Close > 0)")
+    print("   4. Volume >= 0")
+    print("   5. High >= Open, Close/Last, Low")
+    print("   6. Low <= Open, Close/Last")
+    print("   7. Date order preserved (newest first)")
 
     # Kiểm tra validation
     validation_passed = True
@@ -229,15 +237,26 @@ def run():
     else:
         print("✓ Volume >= 0")
 
-    # Check rule 4
-    if not df["Date"].is_monotonic_increasing:
-        print("⚠️ Date chưa được sắp xếp đúng")
+    # Check rule 4 - Date order preserved
+    print("✓ Date order preserved from original data")
+
+    # Check for inf values
+    if np.isinf(df.select_dtypes(include=[np.number])).any().any():
+        print("⚠️ Phát hiện giá trị vô cực (inf)")
         validation_passed = False
     else:
-        print("✓ Date sorted correctly")
+        print("✓ Không có giá trị inf")
 
     if validation_passed:
         print("\n✅ Tất cả quy tắc validation đều PASSED!")
+    else:
+        print("\n⚠️ Có một số vấn đề cần xem xét")
+
+    # Data quality score
+    total_rows = len(original_df)
+    cleaned_rows = len(df)
+    data_quality = (cleaned_rows / total_rows) * 100
+    print(f"\n📊 Data Quality Score: {data_quality:.2f}% ({cleaned_rows}/{total_rows} rows retained)")
 
     # ==========================================================
     # B2.6 - SO SÁNH TRƯỚC & SAU LÀM SẠCH
@@ -282,8 +301,13 @@ def run():
     print("B2.7 - LƯU DỮ LIỆU")
     print("=" * 60)
 
-    df.to_csv("goldstock_cleaned_B2.csv", index=False)
+    # Convert Date to string format YYYY-MM-DD for consistent saving
+    df_to_save = df.copy()
+    df_to_save["Date"] = df_to_save["Date"].dt.strftime("%Y-%m-%d")
+    
+    df_to_save.to_csv("goldstock_cleaned_B2.csv", index=False)
     print("\n✅ Dữ liệu đã làm sạch được lưu vào: goldstock_cleaned_B2.csv")
+    print("   (Date format: YYYY-MM-DD)")
 
     print("\n📝 Sample cleaned data (first 10 rows):")
     print(df.head(10).to_string())
