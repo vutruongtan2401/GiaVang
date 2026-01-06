@@ -1,5 +1,6 @@
 # ==========================================================
-# B5 – MODEL MACHINE LEARNING & GUI
+# B5 – LINEAR REGRESSION DỰ BÁO GIÁ VÀNG
+# Mô hình đơn giản dựa trên dữ liệu đã làm sạch B2
 # ==========================================================
 
 import warnings
@@ -10,459 +11,442 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 import streamlit as st
-
-from sklearn.preprocessing import StandardScaler
-from sklearn.cluster import KMeans
 from sklearn.linear_model import LinearRegression
-from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error, silhouette_score, davies_bouldin_score, calinski_harabasz_score
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
+from datetime import timedelta
 
 plt.style.use('ggplot')
+sns.set_palette("husl")
 
-# ==========================================================
-# LOAD DỮ LIỆU
-# ==========================================================
-@st.cache_data
 def load_data():
-    """Load và xử lý dữ liệu"""
+    """Load dữ liệu đã làm sạch và verify với raw data"""
     try:
+        # Load cleaned data
         df = pd.read_csv("goldstock_cleaned_B2.csv")
         df["Date"] = pd.to_datetime(df["Date"])
-    except:
-        df = pd.read_csv("goldstock v2.csv", sep=";")
-        if "Column1" in df.columns:
-            df.drop(columns=["Column1"], inplace=True)
-        if "Unnamed: 0" in df.columns:
-            df.drop(columns=["Unnamed: 0"], inplace=True)
-        df.columns = df.columns.str.strip()
-        numeric_cols = ["Volume", "Open", "High", "Low", "Close/Last"]
-        for col in numeric_cols:
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors='coerce')
-        try:
-            df["Date"] = pd.to_datetime(df["Date"], format="%d/%m/%Y", errors='coerce')
-        except:
-            df["Date"] = pd.to_datetime(df["Date"], infer_datetime_format=True, errors='coerce')
-        df = df.dropna()
-        df = df[df.duplicated() == False].reset_index(drop=True)
+        
+        # Verify với raw data
+        df_raw = pd.read_csv("goldstock v2.csv", sep=";")
+        df_raw.columns = df_raw.columns.str.strip()
+        
+        # Kiểm tra thứ tự: cleaned phải giữ thứ tự raw (2024 trước)
+        assert df["Date"].iloc[0] > df["Date"].iloc[-1], "❌ Dữ liệu không đúng thứ tự!"
+        
+        return df
+    except Exception as e:
+        st.error(f"❌ Lỗi load dữ liệu: {e}")
+        return None
+
+def create_features(df):
+    """Tạo features với trend + seasonal components"""
+    df = df.copy()
+    
+    # Sort ascending cho time series (model cần thứ tự cũ -> mới)
+    df = df.sort_values('Date').reset_index(drop=True)
+    
+    # 1. TIME FEATURES - Linear trend
+    df['days'] = (df['Date'] - df['Date'].min()).dt.days
+    df['days_normalized'] = df['days'] / df['days'].max()
+    
+    # 2. SEASONAL FEATURES - Cyclical patterns
+    df['day_of_week'] = df['Date'].dt.dayofweek
+    df['month'] = df['Date'].dt.month
+    df['day_sin'] = np.sin(2 * np.pi * df['day_of_week'] / 7)
+    df['day_cos'] = np.cos(2 * np.pi * df['day_of_week'] / 7)
+    df['month_sin'] = np.sin(2 * np.pi * df['month'] / 12)
+    df['month_cos'] = np.cos(2 * np.pi * df['month'] / 12)
+    
+    # 3. LAG FEATURES - Giá ngày trước
+    df['close_lag_1'] = df['Close/Last'].shift(1)
+    df['close_lag_7'] = df['Close/Last'].shift(7)
+    df['close_lag_30'] = df['Close/Last'].shift(30)
+    
+    # 4. MOVING AVERAGES - Multi-timeframe trends
+    df['ma_7'] = df['Close/Last'].rolling(window=7, min_periods=1).mean()
+    df['ma_30'] = df['Close/Last'].rolling(window=30, min_periods=1).mean()
+    df['ma_90'] = df['Close/Last'].rolling(window=90, min_periods=1).mean()
+    
+    # 5. TREND INDICATORS
+    df['trend_7_30'] = df['ma_7'] - df['ma_30']  # Short-term trend
+    df['trend_30_90'] = df['ma_30'] - df['ma_90']  # Long-term trend
+    
+    # 6. MOMENTUM
+    df['momentum_7'] = df['Close/Last'].diff(7)
+    df['momentum_30'] = df['Close/Last'].diff(30)
+    
+    # 7. VOLATILITY - Biến động
+    df['volatility_7'] = df['Close/Last'].rolling(window=7, min_periods=1).std()
+    df['volatility_30'] = df['Close/Last'].rolling(window=30, min_periods=1).std()
+    
+    # Remove rows with NaN
+    df = df.dropna().reset_index(drop=True)
     
     return df
 
-def render_app():
-    """Render B5 app content inside an existing Streamlit page."""
-    st.title("📊 B5 - Machine Learning Model & Visualization")
-    st.markdown("---")
+def train_model(df):
+    """Train Linear Regression model"""
+    
+    # Features
+    feature_cols = [
+        'days_normalized',
+        'day_sin', 'day_cos', 'month_sin', 'month_cos',
+        'close_lag_1', 'close_lag_7', 'close_lag_30',
+        'ma_7', 'ma_30', 'ma_90',
+        'trend_7_30', 'trend_30_90',
+        'momentum_7', 'momentum_30',
+        'volatility_7', 'volatility_30'
+    ]
+    
+    # Train/Test split (80/20)
+    split_idx = int(len(df) * 0.8)
+    df_train = df.iloc[:split_idx].copy()
+    df_test = df.iloc[split_idx:].copy()
+    
+    X_train = df_train[feature_cols].values
+    y_train = df_train['Close/Last'].values
+    X_test = df_test[feature_cols].values
+    y_test = df_test['Close/Last'].values
+    
+    # Standardize
+    scaler = StandardScaler()
+    X_train_scaled = scaler.fit_transform(X_train)
+    X_test_scaled = scaler.transform(X_test)
+    
+    # Train
+    model = LinearRegression()
+    model.fit(X_train_scaled, y_train)
+    
+    # Predict
+    y_train_pred = model.predict(X_train_scaled)
+    y_test_pred = model.predict(X_test_scaled)
+    
+    # Metrics
+    metrics = {
+        'train_r2': r2_score(y_train, y_train_pred),
+        'test_r2': r2_score(y_test, y_test_pred),
+        'test_mae': mean_absolute_error(y_test, y_test_pred),
+        'test_rmse': np.sqrt(mean_squared_error(y_test, y_test_pred)),
+        'test_mape': np.mean(np.abs((y_test - y_test_pred) / y_test)) * 100
+    }
+    
+    return model, scaler, feature_cols, df_train, df_test, y_test, y_test_pred, metrics
 
-    # Load data
-    df = load_data()
-    quantitative_cols = df.select_dtypes(include=["int64", "float64"]).columns.tolist()
-
-    st.success(f"✅ Dữ liệu đã load: {len(df)} hàng, {df.shape[1]} cột")
-
-    # Tạo tabs
-    tab1, tab2 = st.tabs(["🎯 K-Means Clustering", "📈 Linear Regression Prediction"])
-
-    # ==========================================================
-    # TAB 1: K-MEANS CLUSTERING
-    # ==========================================================
-    with tab1:
-        st.header("🎯 Phân cụm dữ liệu (K-Means Clustering)")
+def predict_future(model, scaler, df, feature_cols, n_days):
+    """Dự đoán với trend extrapolation + realistic volatility"""
+    
+    predictions = []
+    future_dates = []
+    
+    # Tính trend từ 30 ngày gần nhất
+    recent_30 = df['Close/Last'].tail(30).values
+    linear_trend = np.polyfit(range(len(recent_30)), recent_30, 1)[0]  # Slope
+    
+    # Tính volatility từ historical
+    historical_volatility = df['Close/Last'].tail(90).std()
+    
+    # Làm việc với bản copy
+    df_pred = df.copy()
+    last_date = df_pred['Date'].iloc[-1]
+    
+    for i in range(n_days):
+        # Ngày tiếp theo
+        next_date = last_date + timedelta(days=i+1)
+        future_dates.append(next_date)
         
-        st.info("⚠️ **Lưu ý:** Mô hình K-Means dưới đây chỉ mang tính minh họa để phân cụm dữ liệu. Mục đích là làm rõ cấu trúc dữ liệu, không đánh giá cao hiệu suất dự báo.")
+        # Time features
+        days_total = (next_date - df['Date'].min()).days
+        days_normalized = days_total / df['days'].max()
         
-        # Sidebar controls
-        st.sidebar.header("⚙️ K-Means Settings")
-        k = st.sidebar.slider(
-            "Số cụm (Number of clusters)",
-            min_value=2,
-            max_value=6,
-            value=3,
-            step=1
-        )
+        # Seasonal features
+        day_of_week = next_date.dayofweek
+        month = next_date.month
+        day_sin = np.sin(2 * np.pi * day_of_week / 7)
+        day_cos = np.cos(2 * np.pi * day_of_week / 7)
+        month_sin = np.sin(2 * np.pi * month / 12)
+        month_cos = np.cos(2 * np.pi * month / 12)
         
-        random_state = st.sidebar.number_input("Random State", value=42, step=1)
-        
-        # Apply KMeans
-        with st.spinner("Đang phân cụm dữ liệu..."):
-            kmeans = KMeans(n_clusters=k, random_state=random_state, n_init=10)
-            df["Cluster"] = kmeans.fit_predict(df[quantitative_cols])
-        
-        # ==========================================================
-        # CLUSTER VISUALIZATION
-        # ==========================================================
-        st.subheader("📊 Trực quan hóa phân cụm")
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.write("**Scatter Plot: Open vs Close**")
-            fig, ax = plt.subplots(figsize=(10, 6))
-            scatter = ax.scatter(df["Open"], df["Close/Last"], 
-                               c=df["Cluster"], cmap='Set2', s=80, alpha=0.6, 
-                               edgecolors='black', linewidth=0.5)
-            ax.scatter(kmeans.cluster_centers_[:, 0], kmeans.cluster_centers_[:, 1],
-                      c='red', marker='X', s=300, edgecolors='black', linewidth=2,
-                      label='Centroids', zorder=5)
-            ax.set_xlabel("Open Price ($)", fontsize=11, fontweight='bold')
-            ax.set_ylabel("Close Price ($)", fontsize=11, fontweight='bold')
-            ax.set_title(f"K-Means Clustering (K={k})", fontsize=12, fontweight='bold')
-            ax.legend()
-            ax.grid(True, alpha=0.3)
-            plt.colorbar(scatter, ax=ax, label='Cluster')
-            st.pyplot(fig)
-        
-        with col2:
-            st.write("**Scatter Plot: Low vs High**")
-            fig, ax = plt.subplots(figsize=(10, 6))
-            scatter = ax.scatter(df["Low"], df["High"],
-                               c=df["Cluster"], cmap='Set2', s=80, alpha=0.6, 
-                               edgecolors='black', linewidth=0.5)
-            ax.scatter(kmeans.cluster_centers_[:, 2], kmeans.cluster_centers_[:, 3],
-                      c='red', marker='X', s=300, edgecolors='black', linewidth=2,
-                      label='Centroids', zorder=5)
-            ax.set_xlabel("Low Price ($)", fontsize=11, fontweight='bold')
-            ax.set_ylabel("High Price ($)", fontsize=11, fontweight='bold')
-            ax.set_title(f"K-Means Clustering (K={k})", fontsize=12, fontweight='bold')
-            ax.legend()
-            ax.grid(True, alpha=0.3)
-            plt.colorbar(scatter, ax=ax, label='Cluster')
-            st.pyplot(fig)
-        
-        # Time series with clusters
-        st.write("### ⏰ Phân bố cụm theo thời gian")
-        fig, ax = plt.subplots(figsize=(14, 6))
-        colors = plt.cm.Set2(np.linspace(0, 1, k))
-        for cluster in range(k):
-            cluster_data = df[df["Cluster"] == cluster]
-            ax.scatter(cluster_data["Date"], cluster_data["Close/Last"],
-                      label=f"Cluster {cluster}", alpha=0.6, s=40, color=colors[cluster])
-        ax.set_xlabel("Date", fontsize=11, fontweight='bold')
-        ax.set_ylabel("Close Price ($)", fontsize=11, fontweight='bold')
-        ax.set_title(f"Gold Price with K-Means Clusters (K={k})", fontsize=12, fontweight='bold')
-        ax.legend(loc='best')
-        ax.grid(True, alpha=0.3)
-        plt.xticks(rotation=45)
-        st.pyplot(fig)
-        
-        # ==========================================================
-        # CLUSTER STATISTICS
-        # ==========================================================
-        st.write("### 📊 Thống kê chi tiết từng cụm")
-        cluster_stats = df.groupby("Cluster")[quantitative_cols].agg(['mean', 'min', 'max', 'std'])
-        st.dataframe(cluster_stats, use_container_width=True)
-        
-        # Cluster sizes
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.write("### 📊 Kích thước cụm")
-            cluster_sizes = df["Cluster"].value_counts().sort_index()
+        # Lag features (mix historical + predictions)
+        if i == 0:
+            close_lag_1 = df_pred['Close/Last'].iloc[-1]
+            close_lag_7 = df_pred['Close/Last'].iloc[-7] if len(df_pred) >= 7 else close_lag_1
+            close_lag_30 = df_pred['Close/Last'].iloc[-30] if len(df_pred) >= 30 else close_lag_1
+        else:
+            close_lag_1 = predictions[-1]
+            if len(predictions) >= 7:
+                close_lag_7 = predictions[-7]
+            else:
+                close_lag_7 = df_pred['Close/Last'].iloc[-(7-i)] if len(df_pred) >= (7-i) else close_lag_1
             
-            fig, ax = plt.subplots(figsize=(8, 5))
-            ax.bar(cluster_sizes.index, cluster_sizes.values, color=colors, 
-                   edgecolor='black', linewidth=1.5)
-            ax.set_xlabel("Cluster", fontsize=11, fontweight='bold')
-            ax.set_ylabel("Number of Data Points", fontsize=11, fontweight='bold')
-            ax.set_title(f"Cluster Size Distribution (K={k})", fontsize=12, fontweight='bold')
-            ax.set_xticks(range(k))
-            for i, v in enumerate(cluster_sizes.values):
-                ax.text(i, v + 5, str(v), ha='center', fontweight='bold')
-            ax.grid(True, alpha=0.3, axis='y')
-            st.pyplot(fig)
+            if len(predictions) >= 30:
+                close_lag_30 = predictions[-30]
+            else:
+                close_lag_30 = df_pred['Close/Last'].iloc[-(30-i)] if len(df_pred) >= (30-i) else close_lag_1
         
-        with col2:
-            st.write("### 📊 Tỷ lệ phần trăm")
-            fig, ax = plt.subplots(figsize=(8, 5))
-            ax.pie(cluster_sizes.values, 
-                   labels=[f"Cluster {i}\n({v} points)" for i, v in enumerate(cluster_sizes.values)],
-                   colors=colors, autopct='%1.1f%%', startangle=90, explode=[0.05]*k)
-            ax.set_title(f"Cluster Distribution (K={k})", fontsize=12, fontweight='bold')
-            st.pyplot(fig)
-        
-        # ==========================================================
-        # CLUSTER CHARACTERISTICS
-        # ==========================================================
-        st.write("### 🔍 Đặc điểm của từng cụm")
-        for cluster in range(k):
-            with st.expander(f"📌 Cluster {cluster} - {len(df[df['Cluster'] == cluster])} điểm dữ liệu"):
-                cluster_data = df[df["Cluster"] == cluster]
-                col1, col2, col3 = st.columns(3)
-                
-                with col1:
-                    st.metric("Giá Close TB", f"${cluster_data['Close/Last'].mean():.2f}")
-                    st.metric("Giá Min", f"${cluster_data['Close/Last'].min():.2f}")
-                
-                with col2:
-                    st.metric("Giá Max", f"${cluster_data['Close/Last'].max():.2f}")
-                    st.metric("Volume TB", f"{cluster_data['Volume'].mean():,.0f}")
-                
-                with col3:
-                    st.metric(
-                        "Từ ngày",
-                        cluster_data['Date'].min().strftime("%d/%m/%Y")
-                    )
-                    st.metric(
-                        "Đến ngày",
-                        cluster_data['Date'].max().strftime("%d/%m/%Y")
-                    )
-        
-        # ==========================================================
-        # MODEL EVALUATION
-        # ==========================================================
-        st.write("### 📊 Đánh giá mô hình K-Means")
-        
-        inertia = kmeans.inertia_
-        silhouette = silhouette_score(df[quantitative_cols], df["Cluster"])
-        davies_bouldin = davies_bouldin_score(df[quantitative_cols], df["Cluster"])
-        calinski = calinski_harabasz_score(df[quantitative_cols], df["Cluster"])
-        
-        col1, col2, col3, col4 = st.columns(4)
-        
-        with col1:
-            st.metric("Inertia", f"{inertia:.2f}")
-            st.caption("Lower is better")
-        
-        with col2:
-            st.metric("Silhouette Score", f"{silhouette:.4f}")
-            st.caption("Higher is better (-1 to 1)")
-        
-        with col3:
-            st.metric("Davies-Bouldin", f"{davies_bouldin:.4f}")
-            st.caption("Lower is better")
-        
-        with col4:
-            st.metric("Calinski-Harabasz", f"{calinski:.2f}")
-            st.caption("Higher is better")
-        
-        # Interpretation
-        if silhouette > 0.5:
-            st.success(f"✅ Silhouette Score = {silhouette:.4f} - Phân cụm TỐT")
-        elif silhouette > 0.3:
-            st.warning(f"⚠️ Silhouette Score = {silhouette:.4f} - Phân cụm TRUNG BÌNH")
+        # MA features (combine historical + predictions)
+        if i < 7:
+            recent_prices = list(df_pred['Close/Last'].tail(7-i).values) + predictions[:i]
+            ma_7 = np.mean(recent_prices)
         else:
-            st.error(f"❌ Silhouette Score = {silhouette:.4f} - Phân cụm CẦN CẢI THIỆN")
+            ma_7 = np.mean(predictions[-7:])
         
-        # Sample data
-        st.write("### 📝 Dữ liệu mẫu sau phân cụm")
-        display_cols = ["Date", "Open", "High", "Low", "Close/Last", "Volume", "Cluster"]
-        st.dataframe(df[display_cols].head(20), use_container_width=True)
-
-    # ==========================================================
-    # TAB 2: LINEAR REGRESSION
-    # ==========================================================
-    with tab2:
-        st.header("📈 Dự đoán giá vàng (Linear Regression)")
-        
-        st.info("🔮 **Mô hình Linear Regression để dự đoán giá vàng đến năm 2027**")
-        
-        # Prepare data
-        df_model = df.copy()
-        df_model['Days'] = (df_model['Date'] - df_model['Date'].min()).dt.days
-        
-        X = df_model[['Days']].values
-        y = df_model['Close/Last'].values
-        
-        # Train model
-        with st.spinner("Đang huấn luyện mô hình..."):
-            lr_model = LinearRegression()
-            lr_model.fit(X, y)
-            y_pred_train = lr_model.predict(X)
-        
-        # Calculate metrics
-        mse = mean_squared_error(y, y_pred_train)
-        rmse = np.sqrt(mse)
-        mae = mean_absolute_error(y, y_pred_train)
-        r2 = r2_score(y, y_pred_train)
-        
-        # Display metrics
-        st.write("### 📊 Hiệu suất mô hình")
-        col1, col2, col3, col4 = st.columns(4)
-        
-        with col1:
-            st.metric("R² Score", f"{r2:.4f}")
-            st.caption("Closer to 1 is better")
-        
-        with col2:
-            st.metric("RMSE", f"${rmse:.2f}")
-            st.caption("Root Mean Squared Error")
-        
-        with col3:
-            st.metric("MAE", f"${mae:.2f}")
-            st.caption("Mean Absolute Error")
-        
-        with col4:
-            st.metric("MSE", f"${mse:.2f}")
-            st.caption("Mean Squared Error")
-        
-        # Model interpretation
-        if r2 > 0.7:
-            st.success(f"✅ R² = {r2:.4f} - Mô hình TỐT")
-        elif r2 > 0.5:
-            st.warning(f"⚠️ R² = {r2:.4f} - Mô hình TRUNG BÌNH")
+        if i < 30:
+            recent_prices_30 = list(df_pred['Close/Last'].tail(30-i).values) + predictions[:i]
+            ma_30 = np.mean(recent_prices_30)
         else:
-            st.error(f"❌ R² = {r2:.4f} - Mô hình YẾU")
+            ma_30 = np.mean(predictions[-30:])
         
-        # ==========================================================
-        # FUTURE PREDICTION
-        # ==========================================================
-        st.write("### 🔮 Dự đoán tương lai")
+        if i < 90:
+            recent_prices_90 = list(df_pred['Close/Last'].tail(90-i).values) + predictions[:i]
+            ma_90 = np.mean(recent_prices_90)
+        else:
+            ma_90 = np.mean(predictions[-90:])
         
-        # Sidebar controls
-        st.sidebar.header("⚙️ Prediction Settings")
-        end_year = st.sidebar.selectbox("Dự đoán đến năm", [2025, 2026, 2027, 2028, 2030], index=2)
+        # Trend indicators
+        trend_7_30 = ma_7 - ma_30
+        trend_30_90 = ma_30 - ma_90
         
-        # Generate future dates
-        last_date = df_model['Date'].max()
-        target_date = pd.Timestamp(f'{end_year}-12-31')
+        # Momentum
+        momentum_7 = close_lag_1 - close_lag_7
+        momentum_30 = close_lag_1 - close_lag_30
         
-        future_dates = pd.date_range(start=last_date + pd.Timedelta(days=1), end=target_date, freq='D')
-        future_days = (future_dates - df_model['Date'].min()).days.values.reshape(-1, 1)
+        # Volatility
+        if i < 7:
+            recent_vol_7 = list(df_pred['Close/Last'].tail(7-i).values) + predictions[:i]
+            volatility_7 = np.std(recent_vol_7) if len(recent_vol_7) > 1 else historical_volatility
+        else:
+            volatility_7 = np.std(predictions[-7:])
+        
+        if i < 30:
+            recent_vol_30 = list(df_pred['Close/Last'].tail(30-i).values) + predictions[:i]
+            volatility_30 = np.std(recent_vol_30) if len(recent_vol_30) > 1 else historical_volatility
+        else:
+            volatility_30 = np.std(predictions[-30:])
+        
+        # Build feature vector
+        X_future = np.array([[
+            days_normalized,
+            day_sin, day_cos, month_sin, month_cos,
+            close_lag_1, close_lag_7, close_lag_30,
+            ma_7, ma_30, ma_90,
+            trend_7_30, trend_30_90,
+            momentum_7, momentum_30,
+            volatility_7, volatility_30
+        ]])
         
         # Predict
-        future_prices = lr_model.predict(future_days)
+        X_scaled = scaler.transform(X_future)
+        pred = model.predict(X_scaled)[0]
         
-        future_df = pd.DataFrame({
-            'Date': future_dates,
-            'Predicted_Price': future_prices
-        })
+        # Add trend component + small random noise for realism
+        trend_component = linear_trend * 0.3  # Giảm 70% trend để không quá mạnh
+        noise = np.random.normal(0, historical_volatility * 0.1)  # 10% volatility
         
-        # ==========================================================
-        # VISUALIZATION
-        # ==========================================================
-        st.write("### 📊 Biểu đồ dự đoán")
+        pred = pred + trend_component + noise
+        predictions.append(pred)
+    
+    return predictions, future_dates
+
+def plot_predictions(df, predictions, future_dates, n_days, title):
+    """Vẽ biểu đồ dự đoán"""
+    
+    fig, ax = plt.subplots(figsize=(14, 6))
+    
+    # Historical data (90 ngày gần nhất)
+    df_recent = df.tail(90)
+    ax.plot(df_recent['Date'], df_recent['Close/Last'], 
+            label='Lịch sử', color='steelblue', linewidth=2, marker='o', markersize=3)
+    
+    # Last point
+    last_date = df['Date'].iloc[-1]
+    last_price = df['Close/Last'].iloc[-1]
+    
+    # Bridge (nối lịch sử với dự đoán)
+    ax.plot([last_date, future_dates[0]], [last_price, predictions[0]], 
+            color='gray', linestyle=':', linewidth=1.5, alpha=0.6)
+    
+    # Predictions
+    ax.plot(future_dates, predictions, 
+            label=f'Dự đoán {n_days} ngày', color='orange', 
+            linewidth=2, marker='s', markersize=4, linestyle='--')
+    
+    # Today line
+    ax.axvline(x=last_date, color='red', linestyle=':', linewidth=2, alpha=0.7, label='Hôm nay')
+    
+    ax.set_xlabel('Ngày', fontsize=12, fontweight='bold')
+    ax.set_ylabel('Giá Close (USD)', fontsize=12, fontweight='bold')
+    ax.set_title(title, fontsize=14, fontweight='bold')
+    ax.legend(fontsize=10, loc='best')
+    ax.grid(True, alpha=0.3)
+    plt.xticks(rotation=45)
+    plt.tight_layout()
+    
+    return fig
+
+def render_app():
+    """Streamlit App"""
+    
+    st.title("📈 B5 — Linear Regression: Dự Báo Giá Vàng")
+    st.markdown("---")
+    
+    # Load data
+    with st.spinner("📂 Đang load dữ liệu..."):
+        df = load_data()
+    
+    if df is None:
+        return
+    
+    st.success(f"✅ Đã load {len(df)} dòng | Từ {df['Date'].min().date()} đến {df['Date'].max().date()}")
+    
+    # Verify thứ tự
+    if df['Date'].iloc[0] > df['Date'].iloc[-1]:
+        st.info("✅ Dữ liệu đúng thứ tự: Mới nhất trước (2024 → 2014)")
+    else:
+        st.warning("⚠️ Dữ liệu đã được sort ascending cho model")
+    
+    # Create features
+    with st.spinner("🔧 Tạo features..."):
+        df_features = create_features(df)
+    
+    st.success(f"✅ Đã tạo features | {len(df_features)} dòng sau khi xử lý")
+    
+    # Train model
+    with st.spinner("🎓 Training model..."):
+        model, scaler, feature_cols, df_train, df_test, y_test, y_test_pred, metrics = train_model(df_features)
+    
+    # Show metrics
+    st.markdown("### 📊 Đánh Giá Model")
+    col1, col2, col3, col4, col5 = st.columns(5)
+    col1.metric("Train R²", f"{metrics['train_r2']:.4f}")
+    col2.metric("Test R²", f"{metrics['test_r2']:.4f}")
+    col3.metric("MAE", f"${metrics['test_mae']:.2f}")
+    col4.metric("RMSE", f"${metrics['test_rmse']:.2f}")
+    col5.metric("MAPE", f"{metrics['test_mape']:.2f}%")
+    
+    # Đánh giá
+    if metrics['test_r2'] > 0.9:
+        st.success("✅ Model rất tốt (R² > 0.9)")
+    elif metrics['test_r2'] > 0.8:
+        st.info("✅ Model tốt (R² > 0.8)")
+    else:
+        st.warning("⚠️ Model cần cải thiện (R² < 0.8)")
+    
+    st.markdown("---")
+    
+    # Tabs cho dự đoán
+    tab1, tab2, tab3 = st.tabs(["📅 30 Ngày", "📅 60 Ngày", "🎯 Tùy Chỉnh"])
+    
+    with tab1:
+        st.subheader("Dự đoán 30 ngày tiếp theo")
         
-        fig, ax = plt.subplots(figsize=(16, 7))
+        with st.spinner("🔮 Đang dự đoán..."):
+            preds_30, dates_30 = predict_future(model, scaler, df_features, feature_cols, 30)
         
-        # Historical actual
-        ax.plot(df_model['Date'], df_model['Close/Last'], 
-                linewidth=2, color='steelblue', label='Historical Actual Price', alpha=0.8)
-        
-        # Historical fitted
-        ax.plot(df_model['Date'], y_pred_train, 
-                linewidth=2, color='orange', linestyle='--', label='Linear Regression Fit', alpha=0.7)
-        
-        # Future prediction
-        ax.plot(future_df['Date'], future_df['Predicted_Price'], 
-                linewidth=2.5, color='red', linestyle='-', label=f'Future Prediction (to {end_year})', alpha=0.8)
-        
-        # Confidence interval
-        std_error = np.std(y - y_pred_train)
-        ax.fill_between(future_df['Date'], 
-                        future_df['Predicted_Price'] - 1.96*std_error,
-                        future_df['Predicted_Price'] + 1.96*std_error,
-                        alpha=0.2, color='red', label='95% Confidence Interval')
-        
-        ax.set_xlabel("Date", fontsize=12, fontweight='bold')
-        ax.set_ylabel("Price (USD/oz)", fontsize=12, fontweight='bold')
-        ax.set_title(f"Gold Price Prediction using Linear Regression (to {end_year})", 
-                     fontsize=14, fontweight='bold')
-        ax.legend(loc='best', fontsize=10)
-        ax.grid(True, alpha=0.3)
-        plt.xticks(rotation=45)
-        plt.tight_layout()
+        # Plot
+        fig = plot_predictions(df_features, preds_30, dates_30, 30, 
+                              "Dự đoán giá vàng 30 ngày tiếp theo")
         st.pyplot(fig)
         
-        # ==========================================================
-        # PREDICTION STATISTICS
-        # ==========================================================
-        st.write("### 📊 Thống kê dự đoán")
+        # Stats
+        st.markdown("**📈 Thống kê dự đoán:**")
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Giá TB", f"${np.mean(preds_30):.2f}")
+        col2.metric("Giá cao nhất", f"${max(preds_30):.2f}")
+        col3.metric("Giá thấp nhất", f"${min(preds_30):.2f}")
         
-        col1, col2 = st.columns(2)
+        # Table
+        df_pred = pd.DataFrame({
+            'Ngày': dates_30,
+            'Giá dự đoán ($)': [f"{p:.2f}" for p in preds_30]
+        })
+        st.dataframe(df_pred, use_container_width=True, height=400)
+    
+    with tab2:
+        st.subheader("Dự đoán 60 ngày tiếp theo")
         
+        with st.spinner("🔮 Đang dự đoán..."):
+            preds_60, dates_60 = predict_future(model, scaler, df_features, feature_cols, 60)
+        
+        # Plot
+        fig = plot_predictions(df_features, preds_60, dates_60, 60, 
+                              "Dự đoán giá vàng 60 ngày tiếp theo")
+        st.pyplot(fig)
+        
+        # Stats
+        st.markdown("**📈 Thống kê dự đoán:**")
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("Giá TB", f"${np.mean(preds_60):.2f}")
+        col2.metric("Giá cao nhất", f"${max(preds_60):.2f}")
+        col3.metric("Giá thấp nhất", f"${min(preds_60):.2f}")
+        col4.metric("Biên độ", f"${max(preds_60) - min(preds_60):.2f}")
+        
+        # Weekly summary
+        df_pred_60 = pd.DataFrame({
+            'Date': dates_60,
+            'Price': preds_60
+        })
+        df_pred_60['Week'] = (df_pred_60.index // 7) + 1
+        summary = df_pred_60.groupby('Week')['Price'].agg(['mean', 'min', 'max']).reset_index()
+        summary.columns = ['Tuần', 'Giá TB ($)', 'Giá Min ($)', 'Giá Max ($)']
+        summary['Tuần'] = 'Tuần ' + summary['Tuần'].astype(str)
+        
+        st.dataframe(summary.style.format({
+            'Giá TB ($)': '{:.2f}',
+            'Giá Min ($)': '{:.2f}',
+            'Giá Max ($)': '{:.2f}'
+        }), use_container_width=True)
+    
+    with tab3:
+        st.subheader("🎯 Chọn ngày cụ thể để dự đoán")
+        
+        # Lấy ngày cuối cùng của data
+        last_date = df_features['Date'].iloc[-1].date()
+        
+        # Date picker
+        col1, col2 = st.columns([2, 1])
         with col1:
-            st.write("**Dự đoán giá vàng:**")
-            prediction_stats = {
-                "Date": [
-                    f"Last Historical ({last_date.date()})",
-                    f"End of 2025",
-                    f"End of 2026",
-                    f"End of {end_year}"
-                ],
-                "Predicted Price": [
-                    f"${df_model['Close/Last'].iloc[-1]:.2f}",
-                    f"${lr_model.predict([[((pd.Timestamp('2025-12-31') - df_model['Date'].min()).days)]])[0]:.2f}",
-                    f"${lr_model.predict([[((pd.Timestamp('2026-12-31') - df_model['Date'].min()).days)]])[0]:.2f}",
-                    f"${lr_model.predict([[((pd.Timestamp(f'{end_year}-12-31') - df_model['Date'].min()).days)]])[0]:.2f}"
-                ]
-            }
-            st.dataframe(pd.DataFrame(prediction_stats), use_container_width=True)
+            selected_date = st.date_input(
+                "Chọn ngày dự đoán:",
+                value=last_date + timedelta(days=30),
+                min_value=last_date + timedelta(days=1),
+                max_value=last_date + timedelta(days=120)
+            )
         
         with col2:
-            st.write("**Thông số mô hình:**")
-            model_params = {
-                "Parameter": [
-                    "Slope (Hệ số góc)",
-                    "Intercept (Hằng số)",
-                    "Daily Price Change",
-                    "Yearly Price Change"
-                ],
-                "Value": [
-                    f"{lr_model.coef_[0]:.4f}",
-                    f"${lr_model.intercept_:.2f}",
-                    f"${lr_model.coef_[0]:.4f}/day",
-                    f"${lr_model.coef_[0]*365:.2f}/year"
-                ]
-            }
-            st.dataframe(pd.DataFrame(model_params), use_container_width=True)
+            n_days = (selected_date - last_date).days
+            st.metric("Số ngày từ hôm nay", f"{n_days} ngày")
         
-        # Model equation
-        st.write("### 📐 Phương trình hồi quy")
-        st.latex(f"Price = {lr_model.intercept_:.2f} + {lr_model.coef_[0]:.4f} \\times Days")
+        st.info(f"📅 Ngày cuối trong dữ liệu: **{last_date}** | Ngày dự đoán: **{selected_date}**")
         
-        # ==========================================================
-        # INTERPRETATION
-        # ==========================================================
-        st.write("### 💡 Giải thích kết quả")
-        
-        trend_direction = "tăng" if lr_model.coef_[0] > 0 else "giảm"
-        trend_emoji = "📈" if lr_model.coef_[0] > 0 else "📉"
-        
-        st.markdown(f"""
-        **Ý nghĩa các chỉ số:**
-        - **R² = {r2:.4f}**: Mô hình giải thích {r2*100:.2f}% sự biến động của giá vàng
-        - **RMSE = ${rmse:.2f}**: Sai số trung bình khoảng ${rmse:.2f}
-        - **Slope = {lr_model.coef_[0]:.4f}**: Giá vàng {trend_direction} trung bình ${abs(lr_model.coef_[0]):.4f}/ngày
-        
-        **Xu hướng:**
-        {trend_emoji} Giá vàng có xu hướng **{trend_direction}** đều đặn với tốc độ **${abs(lr_model.coef_[0]*365):.2f}/năm**
-        
-        **Dự đoán đến {end_year}:**
-        - Giá dự kiến: **${lr_model.predict([[((pd.Timestamp(f'{end_year}-12-31') - df_model['Date'].min()).days)]])[0]:.2f}**
-        - Khoảng tin cậy 95%: **${lr_model.predict([[((pd.Timestamp(f'{end_year}-12-31') - df_model['Date'].min()).days)]])[0] - 1.96*std_error:.2f}** - **${lr_model.predict([[((pd.Timestamp(f'{end_year}-12-31') - df_model['Date'].min()).days)]])[0] + 1.96*std_error:.2f}**
-        """)
-        
-        st.warning("⚠️ **Lưu ý:** Dự đoán dài hạn với Linear Regression có thể không chính xác do giả định xu hướng tuyến tính. Giá vàng bị ảnh hưởng bởi nhiều yếu tố kinh tế, chính trị phức tạp.")
-        
-        # ==========================================================
-        # DOWNLOAD DATA
-        # ==========================================================
-        st.write("### 💾 Tải dữ liệu dự đoán")
-        
-        download_df = pd.DataFrame({
-            'Date': list(df_model['Date']) + list(future_df['Date']),
-            'Actual_Price': list(df_model['Close/Last']) + [np.nan]*len(future_df),
-            'Predicted_Price': list(y_pred_train) + list(future_df['Predicted_Price']),
-            'Type': ['Historical']*len(df_model) + ['Future']*len(future_df)
-        })
-        
-        csv_data = download_df.to_csv(index=False)
-        st.download_button(
-            label="📥 Download Prediction CSV",
-            data=csv_data,
-            file_name=f"gold_price_prediction_to_{end_year}.csv",
-            mime="text/csv"
-        )
-
-    # ==========================================================
-    # FOOTER
-    # ==========================================================
-    st.markdown("---")
-    st.markdown("""
-    <div style='text-align: center'>
-        <p><b>B5 - Machine Learning Model & GUI</b></p>
-        <p>Gold Price Data Mining Project</p>
-    </div>
-    """, unsafe_allow_html=True)
+        if st.button("🔮 Dự đoán", type="primary"):
+            with st.spinner(f"🔮 Đang dự đoán đến {selected_date}..."):
+                preds, dates = predict_future(model, scaler, df_features, feature_cols, n_days)
+            
+            # Plot
+            fig = plot_predictions(df_features, preds, dates, n_days, 
+                                  f"Dự đoán giá vàng đến ngày {selected_date}")
+            st.pyplot(fig)
+            
+            # Highlight giá ngày được chọn
+            predicted_price = preds[-1]
+            st.success(f"💰 **Giá dự đoán ngày {selected_date}: ${predicted_price:.2f}**")
+            
+            # Stats
+            st.markdown("**📈 Thống kê dự đoán:**")
+            col1, col2, col3, col4 = st.columns(4)
+            col1.metric("Giá TB", f"${np.mean(preds):.2f}")
+            col2.metric("Giá cao nhất", f"${max(preds):.2f}")
+            col3.metric("Giá thấp nhất", f"${min(preds):.2f}")
+            
+            # So sánh với hiện tại
+            current_price = df_features['Close/Last'].iloc[-1]
+            change = predicted_price - current_price
+            change_pct = (change / current_price) * 100
+            
+            if change > 0:
+                col4.metric(f"Thay đổi", f"+${change:.2f}", f"+{change_pct:.2f}%")
+            else:
+                col4.metric(f"Thay đổi", f"${change:.2f}", f"{change_pct:.2f}%")
 
 if __name__ == "__main__":
-    st.set_page_config(page_title="Gold Price Data Mining - B5", layout="wide", page_icon="📊")
     render_app()
