@@ -66,6 +66,16 @@ def run():
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
 
+    # Chuẩn hoá đơn vị giá nếu bị phóng đại 10x (23694 -> 2369.4)
+    price_cols = ["Open", "High", "Low", "Close/Last"]
+    if "Close/Last" in df.columns:
+        price_median = df["Close/Last"].median()
+        if price_median > 5000:  # nhận diện giá bị lệch 1 bậc thập phân
+            for col in price_cols:
+                if col in df.columns:
+                    df[col] = df[col] / 10.0
+            print("ℹ️ Đã chuẩn hóa đơn vị giá (chia 10) cho các cột Open/High/Low/Close/Last")
+
     # Convert Date to datetime
     if "Date" in df.columns:
         df["Date"] = pd.to_datetime(df["Date"], format="%d/%m/%Y", errors="coerce")
@@ -87,7 +97,14 @@ def run():
     print(f"\n📊 SHAPE (Số hàng, Số cột): {df.shape}")
     print(f"   • Số hàng (Rows/Observations): {df.shape[0]}")
     print(f"   • Số cột (Columns/Features): {df.shape[1]}")
-    print(f"\n📅 Khoảng thời gian: {df['Date'].min().strftime('%Y-%m-%d')} → {df['Date'].max().strftime('%Y-%m-%d')}")
+    
+    # Handle NaT values in Date column
+    min_date = df['Date'].min()
+    max_date = df['Date'].max()
+    if pd.notna(min_date) and pd.notna(max_date):
+        print(f"\n📅 Khoảng thời gian: {min_date.strftime('%Y-%m-%d')} → {max_date.strftime('%Y-%m-%d')}")
+    else:
+        print(f"\n📅 Khoảng thời gian: {min_date} → {max_date}")
 
     # ==========================================================
     # B1.2 - DATA TYPE CLASSIFICATION (PHÂN LOẠI DỮ LIỆU)
